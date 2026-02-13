@@ -1,6 +1,16 @@
 import { fetchStrategyChangedEvents, type StrategyChangedEvent } from "./hypersync";
 import { getContractName, getStrategyMetadata, getLatestBlock } from "./onchain";
 import { readCache, writeCache } from "./redis";
+import type { StrategyCacheConfig } from "./config";
+
+export interface StrategyEntry {
+  address: string;
+  active: boolean;
+  apr_source: string;
+  offchain: Record<string, unknown>;
+  meta: Record<string, unknown>;
+  points: boolean;
+}
 
 interface StrategyRecord {
   address: string;
@@ -372,4 +382,65 @@ export async function syncAll(
 
   await writeCache(entries as unknown as Record<string, unknown>);
   return entries;
+}
+
+export async function getStrategyEntries(
+  vault: string,
+  chainId: number,
+  cacheConfig: StrategyCacheConfig,
+): Promise<StrategyEntry[]> {
+  const cached = await readCache();
+  if (!cached) return [];
+
+  const key = vaultKey(vault, chainId);
+  const raw = cached[key];
+  if (!raw || typeof raw !== "object") return [];
+
+  const entry = normalizeEntry(raw as Record<string, unknown>);
+
+  const defaults = (cacheConfig.defaults ?? {}) as Record<string, unknown>;
+  const strategyOverrides: Record<string, Record<string, unknown>> = {};
+  for (const [addr, cfg] of Object.entries(cacheConfig.strategies ?? {})) {
+    strategyOverrides[addr.toLowerCase()] = cfg as Record<string, unknown>;
+  }
+  const hardcodedAprs: Record<string, unknown> = {};
+  for (const [addr, cfg] of Object.entries(cacheConfig.hardcoded_aprs ?? {})) {
+    hardcodedAprs[addr.toLowerCase()] = cfg;
+  }
+
+  applyConfigOverrides(entry, defaults, strategyOverrides, hardcodedAprs);
+
+  const strategies = entry.strategies;
+  return Object.values(strategies)
+    .filter((item) => item.active)
+    .map((item) => ({
+      address: item.address,
+      active: item.active,
+      apr_source: item.apr_source,
+      offchain: item.offchain,
+      meta: item.meta,
+      points: item.points,
+    }));
+}
+
+export function getStrategyConfig(
+  address: string,
+  cacheConfig: StrategyCacheConfig,
+): {
+  apr_source: string;
+  offchain: Record<string, unknown>;
+  meta: Record<string, unknown>;
+  points: boolean;
+} {
+  const defaults = (cacheConfig.defaults ?? {}) as Record<string, unknown>;
+  const strategyOverrides: Record<string, Record<string, unknown>> = {};
+  for (const [addr, cfg] of Object.entries(cacheConfig.strategies ?? {})) {
+    strategyOverrides[addr.toLowerCase()] = cfg as Record<string, unknown>;
+  }
+  const hardcodedAprs: Record<string, unknown> = {};
+  for (const [addr, cfg] of Object.entries(cacheConfig.hardcoded_aprs ?? {})) {
+    hardcodedAprs[addr.toLowerCase()] = cfg;
+  }
+
+  return strategyConfig(address, defaults, strategyOverrides, hardcodedAprs);
 }

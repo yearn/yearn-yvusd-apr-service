@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 import { loadServiceConfig } from "@/lib/config";
 import { initOnchainClients } from "@/lib/onchain";
 import { syncAll } from "@/lib/strategy-store";
+import { computeAllVaultsApr } from "@/lib/apr-service";
+import { writeAprResult } from "@/lib/redis";
 
 export const maxDuration = 120;
 
@@ -32,7 +34,10 @@ export async function POST() {
       };
     }
 
-    return NextResponse.json({ ok: true, vaults: summary });
+    const aprResults = await computeAllVaultsApr(config.apr);
+    await writeAprResult(aprResults as unknown as Record<string, unknown>);
+
+    return NextResponse.json({ ok: true, vaults: summary, apr: aprResults });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     return NextResponse.json({ ok: false, error: message }, { status: 500 });

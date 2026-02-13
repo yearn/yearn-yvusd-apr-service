@@ -1,6 +1,7 @@
 import Redis from "ioredis";
 
 const CACHE_KEY = "yvusd:strategy_cache";
+const APR_RESULT_KEY = "yvusd:apr_result";
 
 let _client: Redis | null = null;
 
@@ -21,4 +22,14 @@ export async function readCache(): Promise<Record<string, unknown> | null> {
 
 export async function writeCache(data: Record<string, unknown>): Promise<void> {
   await getClient().set(CACHE_KEY, JSON.stringify(data));
+}
+
+export async function readAprResult(): Promise<Record<string, unknown> | null> {
+  const raw = await getClient().get(APR_RESULT_KEY);
+  if (!raw) return null;
+  return JSON.parse(raw) as Record<string, unknown>;
+}
+
+export async function writeAprResult(data: Record<string, unknown>): Promise<void> {
+  await getClient().set(APR_RESULT_KEY, JSON.stringify(data));
 }

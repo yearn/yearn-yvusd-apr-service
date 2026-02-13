@@ -1,0 +1,217 @@
+# yvUSD APR API
+
+REST API that computes real-time APR data for Yearn's yvUSD and LockedYvUSD vaults. Built on Next.js with viem for onchain reads and Redis for caching.
+
+The API indexes vault strategies from onchain events, computes debt-weighted APRs per vault (including cross-chain, morpho looper, and historical strategies), applies fee schedules, and serves precomputed results.
+
+## Setup
+
+```
+bun install
+cp .env.local.example .env.local
+```
+
+Edit `.env.local` with your values:
+
+```
+ETH_RPC_URL=https://eth.llamarpc.com
+ARB_RPC_URL=https://arb1.arbitrum.io/rpc
+KAT_RPC_URL=
+REDIS_URL=redis://localhost:6379
+HYPERSYNC_API_TOKEN=
+```
+
+A running Redis instance is required.
+
+## Running
+
+```
+bun dev          # development (turbopack)
+bun run build    # production build
+bun start        # production server
+```
+
+## API
+
+### `GET /api/health`
+
+Health check.
+
+```json
+{ "status": "ok", "timestamp": "2026-02-13T12:00:00.000Z" }
+```
+
+### `POST /api/hook/sync`
+
+Triggers a full sync cycle: indexes strategy events from the chain, hydrates onchain metadata, computes APRs for all configured vaults, and writes results to Redis.
+
+Call this on a schedule (e.g. cron every 15 minutes) to keep data fresh.
+
+**Response**
+
+```json
+{
+  "ok": true,
+  "vaults": {
+    "1:0x696d...": { "strategies": 5, "last_block": 24350000 }
+  },
+  "apr": {
+    "0x696d...": {
+      "name": "yvUSD",
+      "symbol": "yvUSD",
+      "address": "0x696d...",
+      "chain_id": 1,
+      "apr": 0.045,
+      "components": [
+        {
+          "label": "net_apr",
+          "apr": 0.045,
+          "source": "onchain",
+          "meta": { "strategy_id": "base_yvusd", "..." : "..." }
+        }
+      ],
+      "meta": { "asset": "0x...", "strategies": [ "..." ] }
+    }
+  }
+}
+```
+
+### `GET /api/aprs`
+
+Returns precomputed APR results from Redis. No onchain calls — instant response.
+
+Returns `404` if sync has not been run yet.
+
+**Response**
+
+```json
+{
+  "0x696d...": {
+    "name": "yvUSD",
+    "symbol": "yvUSD",
+    "address": "0x696d...",
+    "chain_id": 1,
+    "apr": 0.045,
+    "components": [ "..." ],
+    "meta": { "..." : "..." }
+  },
+  "0xAaaF...": {
+    "name": "LockedYvUSD",
+    "symbol": "LockedYvUSD",
+    "address": "0xAaaF...",
+    "chain_id": 1,
+    "apr": 0.062,
+    "components": [
+      { "label": "base_net_apr", "apr": 0.045, "source": "onchain" },
+      { "label": "locker_bonus_apr", "apr": 0.017, "source": "onchain" }
+    ]
+  }
+}
+```
+
+### `GET /api/snapshot`
+
+Returns the raw strategy cache from Redis (indexed strategy metadata, not APRs).
+
+## Architecture
+
+### Sync flow (`POST /api/hook/sync`)
+
+```
+                         POST /api/hook/sync
+                                │
+                    ┌───────────┴───────────┐
+                    │  Load config.yaml     │
+                    │  Init viem clients    │
+                    └───────────┬───────────┘
+                                │
+              ┌─────────────────┴─────────────────┐
+              │  Phase 1: Strategy Sync            │
+              │                                    │
+              │  For each vault:                   │
+              │    HyperSync ──► StrategyChanged   │
+              │    events (or RPC fallback)         │
+              │           │                        │
+              │    Apply events to cache            │
+              │    Hydrate onchain metadata         │
+              │    Apply config overrides           │
+              │           │                        │
+              │  Discover collateral vaults         │
+              │  from morpho-looper strategies      │
+              │  and sync those too                 │
+              │           │                        │
+              │    Write ──► Redis                  │
+              │    (yvusd:strategy_cache)           │
+              └─────────────────┬─────────────────┘
+                                │
+              ┌─────────────────┴─────────────────┐
+              │  Phase 2: APR Computation          │
+              │                                    │
+              │  Create YvUsdAprEngine             │
+              │           │                        │
+              │  For each vault + strategy:        │
+              │    ┌──────┴──────┐                 │
+              │    │  multicall  │ ◄── 1 RPC call  │
+              │    │  batch:     │     per vault    │
+              │    │  totalAssets│                  │
+              │    │  totalSupply│                  │
+              │    │  N debts   │                  │
+              │    │  N oracle  │                  │
+              │    │  APRs      │                  │
+              │    │  feeConfig │                  │
+              │    └──────┬──────┘                 │
+              │           │                        │
+              │  Offchain strategies resolve       │
+              │  individually:                     │
+              │    • static (hardcoded)            │
+              │    • historical (share price)      │
+              │    • morpho-looper (collateral     │
+              │      APR × leverage - borrow APY)  │
+              │    • cross-chain (remote oracle)   │
+              │           │                        │
+              │  Debt-weight APRs, apply fees      │
+              │  Sum components per vault           │
+              │           │                        │
+              │    Write ──► Redis                  │
+              │    (yvusd:apr_result)               │
+              └─────────────────┬─────────────────┘
+                                │
+                         Return JSON response
+                    (vaults summary + apr results)
+```
+
+### APR read flow (`GET /api/aprs`)
+
+```
+        GET /api/aprs
+              │
+     Redis GET yvusd:apr_result
+              │
+        ┌─────┴─────┐
+        │ found?    │
+        ├─ yes ──► 200 JSON (precomputed APRs)
+        └─ no  ──► 404
+```
+
+## Project structure
+
+```
+├── app/
+│   └── api/
+│       ├── health/route.ts        GET  /api/health
+│       ├── hook/sync/route.ts     POST /api/hook/sync
+│       ├── aprs/route.ts          GET  /api/aprs
+│       └── snapshot/route.ts      GET  /api/snapshot
+├── lib/
+│   ├── onchain.ts           viem clients, ABIs, multicall, contract reads
+│   ├── hypersync.ts         HyperSync event fetching (+ RPC fallback)
+│   ├── strategy-store.ts    strategy indexing, config overrides
+│   ├── apr-engine.ts        YvUsdAprEngine — core APR math (bigint)
+│   ├── calculators.ts       yvusd_base / locked_yvusd calculators
+│   ├── apr-service.ts       orchestrator — computeAllVaultsApr()
+│   ├── redis.ts             ioredis client, cache + APR result keys
+│   ├── models.ts            AprComponent, VaultAprResult interfaces
+│   └── config.ts            YAML config loader, type definitions
+└── config/
+    └── config.yaml          vault, strategy, and source configuration
+```
