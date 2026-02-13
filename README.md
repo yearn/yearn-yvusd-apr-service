@@ -41,7 +41,7 @@ Health check.
 { "status": "ok", "timestamp": "2026-02-13T12:00:00.000Z" }
 ```
 
-### `POST /api/hook/sync`
+### `POST /api/sync`
 
 Triggers a full sync cycle: indexes strategy events from the chain, hydrates onchain metadata, computes APRs for all configured vaults, and writes results to Redis.
 
@@ -115,10 +115,10 @@ Returns the raw strategy cache from Redis (indexed strategy metadata, not APRs).
 
 ## Architecture
 
-### Sync flow (`POST /api/hook/sync`)
+### Sync flow (`POST /api/sync`)
 
 ```
-                         POST /api/hook/sync
+                         POST /api/sync
                                 │
                     ┌───────────┴───────────┐
                     │  Load config.yaml     │
@@ -199,7 +199,7 @@ Returns the raw strategy cache from Redis (indexed strategy metadata, not APRs).
 ├── app/
 │   └── api/
 │       ├── health/route.ts        GET  /api/health
-│       ├── hook/sync/route.ts     POST /api/hook/sync
+│       ├── sync/route.ts           POST /api/sync
 │       ├── aprs/route.ts          GET  /api/aprs
 │       └── snapshot/route.ts      GET  /api/snapshot
 ├── lib/

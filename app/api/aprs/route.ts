@@ -10,7 +10,9 @@ export async function GET() {
         { status: 404 },
       );
     }
-    return NextResponse.json(data);
+    return NextResponse.json(data, {
+      headers: { "Cache-Control": "s-maxage=900, stale-while-revalidate=60" },
+    });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     return NextResponse.json({ error: message }, { status: 500 });
