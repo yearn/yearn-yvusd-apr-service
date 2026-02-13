@@ -1,0 +1,59 @@
+apr:
+  enabled: true
+  vaults:
+  - name: yvUSD
+    symbol: yvUSD
+    address: '0x696d02Db93291651ED510704c9b286841d506987'
+    chain_id: 1
+    strategies:
+    - id: base_yvusd
+      type: yvusd_base
+      sources:
+      - kind: onchain
+        name: onchain
+      params:
+        locked_vault: '0xAaaFEa48472f77563961Cdb53291DEDfB46F9040'
+  - name: LockedYvUSD
+    symbol: LockedYvUSD
+    address: '0xAaaFEa48472f77563961Cdb53291DEDfB46F9040'
+    chain_id: 1
+    strategies:
+    - id: locked_apr
+      type: locked_yvusd
+      sources:
+      - kind: onchain
+        name: onchain
+      params:
+        base_vault: '0x696d02Db93291651ED510704c9b286841d506987'
+  sources:
+    onchain:
+      rpc_url_env: ETH_RPC_URL
+      apr_oracle_address: '0x1981AD9F44F2EA9aDd2dC4AD7D075c102C70aF92'
+      chains:
+        '1':
+          rpc_url_env: ETH_RPC_URL
+        '42161':
+          rpc_url_env: ARB_RPC_URL
+        '747474':
+          rpc_url_env: KAT_RPC_URL
+  strategy_cache:
+    start_block: 24271831
+    chunk_size: 5000
+    defaults:
+      apr_source: onchain
+      offchain: {}
+      points: false
+      meta: {}
+    hardcoded_aprs:
+      '0xDBDC1Ef57537E34680B898E1FEBD3D68c7389bCB':
+        type: historical
+      '0xBc65ad17c5C0a2A4D159fa5a503f4992c7B545FE':
+        type: offchain
+        apr: 0.04
+    strategies: {}
+    chains:
+      '1':
+        start_block: 24271831
+    vaults:
+      '0x696d02db93291651ed510704c9b286841d506987':
+        start_block: 24271831
