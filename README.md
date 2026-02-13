@@ -23,6 +23,24 @@ HYPERSYNC_API_TOKEN=
 
 A running Redis instance is required.
 
+### `CRON_SECRET`
+
+Vercel cron jobs call `GET /api/sync` every 15 minutes. The endpoint requires a `CRON_SECRET` environment variable to authenticate these requests. Vercel sends the secret automatically as an `Authorization: Bearer <secret>` header.
+
+Generate a secret (at least 16 random characters):
+
+```
+openssl rand -base64 32
+```
+
+Add it as an environment variable in your Vercel project:
+
+1. Go to **Settings > Environment Variables** in the Vercel dashboard
+2. Add `CRON_SECRET` with your generated value
+3. Scope it to **Production** (cron jobs only run on production deployments)
+
+When `CRON_SECRET` is not set (e.g. local dev), the auth check is skipped so you can call the endpoint freely.
+
 ## Running
 
 ```
@@ -41,11 +59,11 @@ Health check.
 { "status": "ok", "timestamp": "2026-02-13T12:00:00.000Z" }
 ```
 
-### `POST /api/sync`
+### `GET /api/sync`
 
-Triggers a full sync cycle: indexes strategy events from the chain, hydrates onchain metadata, computes APRs for all configured vaults, and writes results to Redis.
+Triggers a full sync cycle: indexes strategy events from the chain, hydrates onchain metadata, computes APRs for all configured vaults, and writes results to Redis. Called automatically by Vercel cron every 15 minutes.
 
-Call this on a schedule (e.g. cron every 15 minutes) to keep data fresh.
+In production, requires `Authorization: Bearer <CRON_SECRET>` header (Vercel sends this automatically). In dev, the auth check is skipped when `CRON_SECRET` is not set.
 
 **Response**
 
@@ -115,10 +133,10 @@ Returns the raw strategy cache from Redis (indexed strategy metadata, not APRs).
 
 ## Architecture
 
-### Sync flow (`POST /api/sync`)
+### Sync flow (`GET /api/sync`)
 
 ```
-                         POST /api/sync
+                          GET /api/sync
                                 │
                     ┌───────────┴───────────┐
                     │  Load config.yaml     │
@@ -199,7 +217,7 @@ Returns the raw strategy cache from Redis (indexed strategy metadata, not APRs).
 ├── app/
 │   └── api/
 │       ├── health/route.ts        GET  /api/health
-│       ├── sync/route.ts           POST /api/sync
+│       ├── sync/route.ts           GET  /api/sync
 │       ├── aprs/route.ts          GET  /api/aprs
 │       └── snapshot/route.ts      GET  /api/snapshot
 ├── lib/
