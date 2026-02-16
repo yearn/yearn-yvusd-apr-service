@@ -1,7 +1,9 @@
 import Redis from "ioredis";
+import type { VaultAprResult } from "./models";
 
 const CACHE_KEY = "yvusd:strategy_cache";
 const APR_RESULT_KEY = "yvusd:apr_result";
+const VAULT_APR_PREFIX = "yvusd:vault_apr:";
 
 let _client: Redis | null = null;
 
@@ -31,5 +33,17 @@ export async function readAprResult(): Promise<Record<string, unknown> | null> {
 }
 
 export async function writeAprResult(data: Record<string, unknown>): Promise<void> {
-  await getClient().set(APR_RESULT_KEY, JSON.stringify(data));
+  const pipeline = getClient().pipeline();
+  pipeline.set(APR_RESULT_KEY, JSON.stringify(data));
+  for (const [address, vault] of Object.entries(data)) {
+    pipeline.set(`${VAULT_APR_PREFIX}${address.toLowerCase()}`, JSON.stringify(vault));
+  }
+  await pipeline.exec();
+}
+
+export async function readVaultAprs(addresses: string[]): Promise<(VaultAprResult | null)[]> {
+  if (addresses.length === 0) return [];
+  const keys = addresses.map((a) => `${VAULT_APR_PREFIX}${a.toLowerCase()}`);
+  const values = await getClient().mget(...keys);
+  return values.map((raw) => (raw ? (JSON.parse(raw) as VaultAprResult) : null));
 }
