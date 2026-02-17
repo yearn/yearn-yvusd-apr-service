@@ -21,7 +21,11 @@ REDIS_URL=redis://localhost:6379
 HYPERSYNC_API_TOKEN=
 ```
 
-A running Redis instance is required.
+A running Redis instance is required. To run redis on localhost, try docker like this
+
+```
+docker run --rm -p 6379:6379 redis:latest
+```
 
 ### `CRON_SECRET`
 
