@@ -145,8 +145,13 @@ export async function fetchStrategyChangedEvents(
   vaultAddress: string,
   fromBlock: number,
 ): Promise<{ events: StrategyChangedEvent[]; lastBlock: number }> {
-  if (HYPERSYNC_URLS[chainId]) {
-    return fetchViaHypersync(chainId, vaultAddress, fromBlock);
+  const hasHypersyncToken = Boolean((process.env.HYPERSYNC_API_TOKEN ?? "").trim());
+  if (HYPERSYNC_URLS[chainId] && hasHypersyncToken) {
+    try {
+      return await fetchViaHypersync(chainId, vaultAddress, fromBlock);
+    } catch {
+      return fetchViaRpc(chainId, vaultAddress, fromBlock);
+    }
   }
   return fetchViaRpc(chainId, vaultAddress, fromBlock);
 }
