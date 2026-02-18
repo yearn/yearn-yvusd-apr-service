@@ -195,8 +195,28 @@ async function hydrateOnchainMetadata(entry: VaultEntry): Promise<void> {
 
   if (!entry.chain_id) return;
 
+  function shouldRefreshStrategyMetadata(item: StrategyRecord): boolean {
+    if (!item.onchain_loaded) return true;
+
+    const meta = item.meta ?? {};
+    const strategyType = String(meta.type ?? "").toLowerCase().replace(/_/g, "-");
+    if (!strategyType || strategyType === "default") return true;
+
+    if (strategyType.startsWith("pt")) {
+      const hasPendleRouter = typeof meta.pendle_router === "string" &&
+        meta.pendle_router.trim() !== "";
+      const hasMarket = typeof meta.market === "string" &&
+        meta.market.trim() !== "";
+      const hasPtToken = typeof meta.pt === "string" &&
+        meta.pt.trim() !== "";
+      if (!hasPendleRouter && !hasMarket && !hasPtToken) return true;
+    }
+
+    return false;
+  }
+
   for (const item of Object.values(entry.strategies)) {
-    if (item.onchain_loaded) continue;
+    if (!shouldRefreshStrategyMetadata(item)) continue;
     if (!item.address) continue;
 
     let meta: Record<string, unknown> = {};
