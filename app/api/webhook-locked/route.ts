@@ -10,26 +10,36 @@ import {
 } from "@/lib/webhook-utils";
 import { NextRequest, NextResponse } from "next/server";
 
-const YVUSD_ADDRESS = process.env.YVUSD_ADDRESS ?? "";
+const LOCKED_YVUSD_ADDRESS = process.env.LOCKED_YVUSD_ADDRESS ?? "";
 
-function buildOutputs(
+function buildLockedOutputs(
   vault: VaultAprResult,
   label: string,
   blockNumber: bigint,
   blockTime: bigint,
 ): KongOutput[] {
-  if (vault.address.toLowerCase() !== YVUSD_ADDRESS.toLowerCase()) return [];
+  if (vault.address.toLowerCase() !== LOCKED_YVUSD_ADDRESS.toLowerCase()) return [];
   const base = { chainId: vault.chain_id, address: vault.address, label, blockNumber, blockTime };
 
-  const netApr = findComponent(vault.components, "net_apr");
-  if (!netApr) return [];
-  const outputs: KongOutput[] = [
-    { ...base, component: "netAPR", value: netApr.apr },
-  ];
-  const grossRaw = netApr.meta?.gross_apr_raw as string | undefined;
-  if (grossRaw) {
-    outputs.push({ ...base, component: "grossAPR", value: grossAprFromRaw(grossRaw) });
+  const outputs: KongOutput[] = [];
+
+  const baseNetApr = findComponent(vault.components, "base_net_apr");
+  const bonusApr = findComponent(vault.components, "locker_bonus_apr");
+
+  const netAprValue = (baseNetApr?.apr ?? 0) + (bonusApr?.apr ?? 0);
+  outputs.push({ ...base, component: "netAPR", value: netAprValue });
+
+  if (baseNetApr) {
+    outputs.push({ ...base, component: "baseNetAPR", value: baseNetApr.apr });
+    const grossRaw = baseNetApr.meta?.gross_apr_raw as string | undefined;
+    if (grossRaw) {
+      outputs.push({ ...base, component: "grossAPR", value: grossAprFromRaw(grossRaw) });
+    }
   }
+  if (bonusApr) {
+    outputs.push({ ...base, component: "lockerBonusAPR", value: bonusApr.apr });
+  }
+
   return outputs;
 }
 
@@ -38,7 +48,7 @@ export async function OPTIONS() {
 }
 
 export async function POST(request: NextRequest) {
-  const secret = process.env.KONG_WEBHOOK_SECRET;
+  const secret = process.env.KONG_WEBHOOK_SECRET_LOCKED;
   if (!secret) {
     return NextResponse.json({ error: "Webhook secret not configured" }, { status: 500 });
   }
@@ -62,13 +72,13 @@ export async function POST(request: NextRequest) {
     for (let i = 0; i < addresses.length; i++) {
       const vault = aprResults[i];
       if (!vault) continue;
-      outputs.push(...buildOutputs(vault, label, blockNumber, blockTime));
+      outputs.push(...buildLockedOutputs(vault, label, blockNumber, blockTime));
     }
 
     return jsonResponseWithBigInt(outputs);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    console.error(`Webhook error: ${message}`, { error });
+    console.error(`Webhook-locked error: ${message}`, { error });
     return NextResponse.json({ error: message }, { status: 400 });
   }
 }
