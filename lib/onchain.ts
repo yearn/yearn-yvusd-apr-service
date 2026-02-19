@@ -23,6 +23,7 @@ const vaultAbi = parseAbi([
   "function totalAssets() view returns (uint256)",
   "function totalSupply() view returns (uint256)",
   "function strategies(address) view returns (uint256 activation, uint256 last_report, uint256 current_debt, uint256 max_debt)",
+  "function profitMaxUnlockTime() view returns (uint256)",
 ]);
 
 const aprOracleAbi = parseAbi([
@@ -472,6 +473,20 @@ export async function getVaultTotalSupply(vault: string, chainId: number): Promi
       address: getAddress(vault),
       abi: vaultAbi,
       functionName: "totalSupply",
+    });
+  } catch {
+    return 0n;
+  }
+}
+
+export async function getVaultProfitMaxUnlockTime(vault: string, chainId: number): Promise<bigint> {
+  const client = getViemClient(chainId);
+  if (!client) return 0n;
+  try {
+    return await client.readContract({
+      address: getAddress(vault),
+      abi: vaultAbi,
+      functionName: "profitMaxUnlockTime",
     });
   } catch {
     return 0n;

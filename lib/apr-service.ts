@@ -1,8 +1,9 @@
 import type { AprConfig } from "./config";
 import type { VaultAprResult } from "./models";
-import { initOnchainClients, getErc4626Asset } from "./onchain";
+import { initOnchainClients, getErc4626Asset, getVaultProfitMaxUnlockTime } from "./onchain";
 import { YvUsdAprEngine } from "./apr-engine";
 import { getCalculator } from "./calculators";
+import { aprToApy, unlockTimeToPeriodsPerYear } from "./apy";
 
 export async function computeAllVaultsApr(
   config: AprConfig,
@@ -21,6 +22,13 @@ export async function computeAllVaultsApr(
       components.push(...parts);
     }
 
+    const unlockTime = await getVaultProfitMaxUnlockTime(vault.address, vault.chain_id);
+    const periodsPerYear = unlockTimeToPeriodsPerYear(Number(unlockTime));
+
+    for (const comp of components) {
+      comp.apy = aprToApy(comp.apr, periodsPerYear);
+    }
+
     const totalApr = components.reduce((sum, c) => sum + c.apr, 0);
     const payload: VaultAprResult = {
       name: vault.name,
@@ -28,6 +36,7 @@ export async function computeAllVaultsApr(
       address: vault.address,
       chain_id: vault.chain_id,
       apr: totalApr,
+      apy: aprToApy(totalApr, periodsPerYear),
       components,
     };
 

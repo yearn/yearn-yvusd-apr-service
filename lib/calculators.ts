@@ -43,6 +43,7 @@ async function calculateYvusdBase(
     {
       label: "net_apr",
       apr: aprToFloat(netApr),
+      apy: 0,
       source: "onchain",
       meta,
     },
@@ -94,6 +95,7 @@ async function calculateLockedYvusd(
     components.push({
       label: "base_net_apr",
       apr: aprToFloat(netApr),
+      apy: 0,
       source: "onchain",
       meta,
     });
@@ -101,6 +103,7 @@ async function calculateLockedYvusd(
   components.push({
     label: "locker_bonus_apr",
     apr: aprToFloat(bonusApr),
+    apy: 0,
     source: "onchain",
     meta,
   });
