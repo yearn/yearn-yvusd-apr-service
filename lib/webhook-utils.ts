@@ -62,9 +62,6 @@ export function parseWebhookBody(rawBody: string): ParsedWebhookBody {
   };
 }
 
-export function grossAprFromRaw(raw: string): number {
-  return Number(BigInt(raw)) / 1e18;
-}
 
 export function findComponent(components: AprComponent[], label: string): AprComponent | undefined {
   return components.find((c) => c.label === label);
