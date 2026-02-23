@@ -59,7 +59,7 @@ export default async function Home() {
                       {(v.apr * 100).toFixed(2)}%
                     </td>
                     <td className="py-3 pr-4 text-right font-mono">
-                      {(v.apy * 100).toFixed(2)}%
+                      {v.apy != null ? `${(v.apy * 100).toFixed(2)}%` : "—"}
                     </td>
                     <td className="py-3">
                       <div className="flex flex-wrap gap-1">
@@ -72,9 +72,11 @@ export default async function Home() {
                             <span className="text-zinc-300">
                               {(c.apr * 100).toFixed(2)}%
                             </span>
-                            <span className="text-zinc-500 ml-1">
-                              ({(c.apy * 100).toFixed(2)}% APY)
-                            </span>
+                            {c.apy != null && (
+                              <span className="text-zinc-500 ml-1">
+                                ({(c.apy * 100).toFixed(2)}% APY)
+                              </span>
+                            )}
                           </span>
                         ))}
                       </div>
