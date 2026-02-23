@@ -34,11 +34,11 @@ export default async function Home() {
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-zinc-800 text-left text-zinc-400">
-                  <th className="pb-3 pr-4 font-medium">Vault</th>
-                  <th className="pb-3 pr-4 font-medium">Chain</th>
-                  <th className="pb-3 pr-4 font-medium text-right">APR</th>
-                  <th className="pb-3 pr-4 font-medium text-right">APY</th>
-                  <th className="pb-3 font-medium w-full">Components</th>
+                  <th className="pb-3 pr-4 font-medium whitespace-nowrap">Vault</th>
+                  <th className="pb-3 pr-4 font-medium whitespace-nowrap">Chain</th>
+                  <th className="pb-3 pr-4 font-medium text-right whitespace-nowrap">APR</th>
+                  <th className="pb-3 pr-4 font-medium text-right whitespace-nowrap">APY</th>
+                  <th className="pb-3 font-medium" style={{ width: "99%" }}>Components</th>
                 </tr>
               </thead>
               <tbody>
