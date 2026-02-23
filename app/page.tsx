@@ -20,16 +20,16 @@ export default async function Home() {
   return (
     <main className="max-w-3xl mx-auto px-6 py-16">
       <header className="mb-12">
-        <h1 className="text-3xl font-semibold mb-2">yvUSD APR/APY API</h1>
+        <h1 className="text-3xl font-semibold mb-2">yvUSD APR API</h1>
         <p className="text-zinc-400">
-          Real-time APR and APY data for Yearn{"'"}s yvUSD and LockedYvUSD vaults.
+          Real-time APR data for Yearn{"'"}s yvUSD and LockedYvUSD vaults.
           Synced every 15 minutes.
         </p>
       </header>
 
       {vaults.length > 0 && (
         <section className="mb-10">
-          <h2 className="text-xl font-semibold mb-4">Latest APRs / APYs</h2>
+          <h2 className="text-xl font-semibold mb-4">Latest APRs</h2>
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
