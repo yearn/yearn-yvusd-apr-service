@@ -38,7 +38,7 @@ export default async function Home() {
                   <th className="pb-3 pr-4 font-medium">Chain</th>
                   <th className="pb-3 pr-4 font-medium text-right">APR</th>
                   <th className="pb-3 pr-4 font-medium text-right">APY</th>
-                  <th className="pb-3 font-medium">Components</th>
+                  <th className="pb-3 font-medium w-full">Components</th>
                 </tr>
               </thead>
               <tbody>
