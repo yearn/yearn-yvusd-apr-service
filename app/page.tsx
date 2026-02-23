@@ -18,7 +18,7 @@ export default async function Home() {
     : "http://localhost:3000";
 
   return (
-    <main className="max-w-4xl mx-auto px-6 py-16">
+    <main className="max-w-3xl mx-auto px-6 py-16">
       <header className="mb-12">
         <h1 className="text-3xl font-semibold mb-2">yvUSD APR API</h1>
         <p className="text-zinc-400">
@@ -34,11 +34,11 @@ export default async function Home() {
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-zinc-800 text-left text-zinc-400">
-                  <th className="pb-3 pr-4 font-medium whitespace-nowrap">Vault</th>
-                  <th className="pb-3 pr-4 font-medium whitespace-nowrap">Chain</th>
-                  <th className="pb-3 pr-4 font-medium text-right whitespace-nowrap">APR</th>
-                  <th className="pb-3 pr-4 font-medium text-right whitespace-nowrap">APY</th>
-                  <th className="pb-3 font-medium" style={{ width: "99%" }}>Components</th>
+                  <th className="pb-3 pr-4 font-medium">Vault</th>
+                  <th className="pb-3 pr-4 font-medium">Chain</th>
+                  <th className="pb-3 pr-4 font-medium text-right">APR</th>
+                  <th className="pb-3 pr-4 font-medium text-right">APY</th>
+                  <th className="pb-3 font-medium">Components</th>
                 </tr>
               </thead>
               <tbody>
