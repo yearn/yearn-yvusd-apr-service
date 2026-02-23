@@ -51,21 +51,29 @@ export async function POST(request: NextRequest) {
       if (!vault) continue;
       const base = { chainId: vault.chain_id, address: vault.address, label, blockNumber, blockTime };
 
-      const netApr = findComponent(vault.components, "net_apr");
-      const baseNetApr = findComponent(vault.components, "base_net_apr");
-      const bonusApr = findComponent(vault.components, "locker_bonus_apr");
-      const aprSource = netApr ?? baseNetApr;
-      if (!aprSource && !bonusApr) continue;
+      const netAPR = findComponent(vault.components, "net_apr");
+      const baseNetAPR = findComponent(vault.components, "base_net_apr");
+      const lockerBonusAPR = findComponent(vault.components, "locker_bonus_apr");
+      const aprSource = netAPR ?? baseNetAPR;
+      if (!aprSource && !lockerBonusAPR) continue;
 
-      const netValue = netApr?.apr ?? ((baseNetApr?.apr ?? 0) + (bonusApr?.apr ?? 0));
+      const netValue = netAPR?.apr ?? ((baseNetAPR?.apr ?? 0) + (lockerBonusAPR?.apr ?? 0));
       outputs.push({ ...base, component: "netAPR", value: netValue });
+      outputs.push({ ...base, component: "netAPY", value: netAPR?.apy ?? 0 });
 
       if (aprSource) {
         const grossRaw = aprSource.meta?.gross_apr_raw as string | undefined;
         if (grossRaw) outputs.push({ ...base, component: "grossAPR", value: Number(BigInt(grossRaw)) / 1e18 });
       }
-      if (baseNetApr) outputs.push({ ...base, component: "baseNetAPR", value: baseNetApr.apr });
-      if (bonusApr) outputs.push({ ...base, component: "lockerBonusAPR", value: bonusApr.apr });
+      
+      if (baseNetAPR) {
+        outputs.push({ ...base, component: "baseNetAPR", value: baseNetAPR.apr });
+        outputs.push({ ...base, component: "baseNetAPY", value: baseNetAPR.apy });
+      }
+      if (lockerBonusAPR) {
+        outputs.push({ ...base, component: "lockerBonusAPR", value: lockerBonusAPR.apr });
+        outputs.push({ ...base, component: "lockerBonusAPY", value: lockerBonusAPR.apy });
+      }
     }
 
     return jsonResponseWithBigInt(outputs);
