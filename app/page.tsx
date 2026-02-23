@@ -18,7 +18,7 @@ export default async function Home() {
     : "http://localhost:3000";
 
   return (
-    <main className="max-w-3xl mx-auto px-6 py-16">
+    <main className="max-w-4xl mx-auto px-6 py-16">
       <header className="mb-12">
         <h1 className="text-3xl font-semibold mb-2">yvUSD APR API</h1>
         <p className="text-zinc-400">
