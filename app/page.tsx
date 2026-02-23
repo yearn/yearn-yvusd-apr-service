@@ -20,16 +20,16 @@ export default async function Home() {
   return (
     <main className="max-w-3xl mx-auto px-6 py-16">
       <header className="mb-12">
-        <h1 className="text-3xl font-semibold mb-2">yvUSD APR API</h1>
+        <h1 className="text-3xl font-semibold mb-2">yvUSD APR/APY API</h1>
         <p className="text-zinc-400">
-          Real-time APR data for Yearn{"'"}s yvUSD and LockedYvUSD vaults.
+          Real-time APR and APY data for Yearn{"'"}s yvUSD and LockedYvUSD vaults.
           Synced every 15 minutes.
         </p>
       </header>
 
       {vaults.length > 0 && (
         <section className="mb-10">
-          <h2 className="text-xl font-semibold mb-4">Latest APRs</h2>
+          <h2 className="text-xl font-semibold mb-4">Latest APRs / APYs</h2>
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
@@ -37,6 +37,7 @@ export default async function Home() {
                   <th className="pb-3 pr-4 font-medium">Vault</th>
                   <th className="pb-3 pr-4 font-medium">Chain</th>
                   <th className="pb-3 pr-4 font-medium text-right">APR</th>
+                  <th className="pb-3 pr-4 font-medium text-right">APY</th>
                   <th className="pb-3 font-medium">Components</th>
                 </tr>
               </thead>
@@ -57,6 +58,9 @@ export default async function Home() {
                     <td className="py-3 pr-4 text-right font-mono">
                       {(v.apr * 100).toFixed(2)}%
                     </td>
+                    <td className="py-3 pr-4 text-right font-mono">
+                      {(v.apy * 100).toFixed(2)}%
+                    </td>
                     <td className="py-3">
                       <div className="flex flex-wrap gap-1">
                         {v.components.map((c, i) => (
@@ -67,6 +71,9 @@ export default async function Home() {
                             {c.label}{" "}
                             <span className="text-zinc-300">
                               {(c.apr * 100).toFixed(2)}%
+                            </span>
+                            <span className="text-zinc-500 ml-1">
+                              ({(c.apy * 100).toFixed(2)}% APY)
                             </span>
                           </span>
                         ))}
@@ -128,8 +135,9 @@ export default async function Home() {
     "address": "0x696d...",
     "chain_id": 1,
     "apr": 0.045,
+    "apy": 0.046,
     "components": [
-      { "label": "net_apr", "apr": 0.045, "source": "onchain" }
+      { "label": "net_apr", "apr": 0.045, "apy": 0.046, "source": "onchain" }
     ]
   }
 }`}
