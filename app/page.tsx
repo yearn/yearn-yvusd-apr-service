@@ -37,6 +37,7 @@ export default async function Home() {
                   <th className="pb-3 pr-4 font-medium">Vault</th>
                   <th className="pb-3 pr-4 font-medium">Chain</th>
                   <th className="pb-3 pr-4 font-medium text-right">APR</th>
+                  <th className="pb-3 pr-4 font-medium text-right">APY</th>
                   <th className="pb-3 font-medium">Components</th>
                 </tr>
               </thead>
@@ -57,6 +58,9 @@ export default async function Home() {
                     <td className="py-3 pr-4 text-right font-mono">
                       {(v.apr * 100).toFixed(2)}%
                     </td>
+                    <td className="py-3 pr-4 text-right font-mono">
+                      {v.apy != null ? `${(v.apy * 100).toFixed(2)}%` : "—"}
+                    </td>
                     <td className="py-3">
                       <div className="flex flex-wrap gap-1">
                         {v.components.map((c, i) => (
@@ -68,6 +72,11 @@ export default async function Home() {
                             <span className="text-zinc-300">
                               {(c.apr * 100).toFixed(2)}%
                             </span>
+                            {c.apy != null && (
+                              <span className="text-zinc-500 ml-1">
+                                ({(c.apy * 100).toFixed(2)}% APY)
+                              </span>
+                            )}
                           </span>
                         ))}
                       </div>
@@ -128,8 +137,9 @@ export default async function Home() {
     "address": "0x696d...",
     "chain_id": 1,
     "apr": 0.045,
+    "apy": 0.046,
     "components": [
-      { "label": "net_apr", "apr": 0.045, "source": "onchain" }
+      { "label": "net_apr", "apr": 0.045, "apy": 0.046, "source": "onchain" }
     ]
   }
 }`}

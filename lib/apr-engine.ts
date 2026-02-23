@@ -8,6 +8,10 @@ import {
   getStrategyMarketId,
   getStrategyMorpho,
   getStrategyLeverageRatio,
+  getStrategyPendleMarket,
+  getStrategyPendleRouter,
+  getPendleMarketImpliedApy,
+  getPendleMarketApyFromApi,
   getMorphoMarketBorrowApy,
   fetchVaultAprData,
 } from "./onchain";
@@ -253,7 +257,7 @@ export class YvUsdAprEngine {
 
     if (OFFCHAIN_TYPES.has(strategyType)) {
       const offchainApr = await this._getOffchainStrategyApr(entry, chainId);
-      if (offchainApr !== null) return offchainApr;
+      if (offchainApr !== null && offchainApr !== 0n) return offchainApr;
     }
 
     if (strategyType === "cross-chain") {
@@ -292,7 +296,7 @@ export class YvUsdAprEngine {
             remoteEntry,
             remoteChainId ?? chainId,
           );
-          if (offchainApr !== null) return offchainApr;
+          if (offchainApr !== null && offchainApr !== 0n) return offchainApr;
         }
 
         if (remoteChainId) {
@@ -308,7 +312,7 @@ export class YvUsdAprEngine {
 
     if (entry.apr_source === "offchain") {
       const offchainApr = await this._getOffchainStrategyApr(entry, chainId);
-      if (offchainApr !== null) return offchainApr;
+      if (offchainApr !== null && offchainApr !== 0n) return offchainApr;
     }
 
     return getStrategyApr(entry.address, debtChange, chainId);
@@ -325,6 +329,9 @@ export class YvUsdAprEngine {
     if (!mode && MORPHO_STRATEGY_TYPES.has(strategyType)) {
       mode = "morpho-looper";
     }
+    if (!mode && strategyType === "pt") {
+      mode = "pt-estimated";
+    }
 
     if (mode === "static") {
       return parseAprValue(cfg, "apr_raw", "apr");
@@ -333,12 +340,58 @@ export class YvUsdAprEngine {
     if (mode === "historical") {
       return this._getHistoricalOffchainApr(entry, chainId, cfg);
     }
+    if (mode === "pt-estimated" || mode === "pt") {
+      return this._getPtEstimatedOffchainApr(entry, chainId, cfg);
+    }
 
     if (MORPHO_LOOPER_TYPES.has(mode)) {
       return this._getMorphoLooperOffchainApr(entry, chainId, cfg);
     }
 
     return null;
+  }
+
+  private async _getPtEstimatedOffchainApr(
+    entry: StrategyEntry,
+    chainId: number,
+    cfg: Record<string, unknown>,
+  ): Promise<bigint | null> {
+    const ptToken = String(cfg.pt ?? cfg.pt_token ?? entry.meta.pt ?? "").trim();
+    let apiApyRaw: bigint | null = null;
+
+    let pendleRouter = String(cfg.pendle_router ?? entry.meta.pendle_router ?? "").trim();
+    if (!pendleRouter) {
+      pendleRouter = (await getStrategyPendleRouter(entry.address, chainId)) ?? "";
+    }
+    if (!pendleRouter && ptToken) {
+      pendleRouter = (await getStrategyPendleRouter(ptToken, chainId)) ?? "";
+    }
+    if (!pendleRouter) return null;
+
+    let pendleMarket = String(cfg.market ?? entry.meta.market ?? "").trim();
+    if (!pendleMarket) {
+      pendleMarket = (await getStrategyPendleMarket(entry.address, chainId)) ?? "";
+    }
+    if (!pendleMarket && ptToken) {
+      pendleMarket = (await getStrategyPendleMarket(ptToken, chainId)) ?? "";
+    }
+    if (ptToken) {
+      const api = await getPendleMarketApyFromApi(chainId, ptToken);
+      if (!pendleMarket && api.market) {
+        pendleMarket = api.market;
+        entry.meta = { ...(entry.meta ?? {}), market: pendleMarket };
+      }
+      if (api.apyRaw !== null) {
+        apiApyRaw = api.apyRaw;
+      }
+    }
+
+    if (pendleMarket && pendleRouter) {
+      const onchainApy = await getPendleMarketImpliedApy(pendleMarket, pendleRouter, chainId);
+      if (onchainApy !== null) return onchainApy;
+    }
+
+    return apiApyRaw;
   }
 
   private async _getHistoricalOffchainApr(

@@ -23,6 +23,7 @@ const vaultAbi = parseAbi([
   "function totalAssets() view returns (uint256)",
   "function totalSupply() view returns (uint256)",
   "function strategies(address) view returns (uint256 activation, uint256 last_report, uint256 current_debt, uint256 max_debt)",
+  "function profitMaxUnlockTime() view returns (uint256)",
 ]);
 
 const aprOracleAbi = parseAbi([
@@ -66,12 +67,52 @@ const aTokenAbi = parseAbi(["function aToken() view returns (address)"]);
 const pendleRouterAbi = parseAbi([
   "function pendleRouter() view returns (address)",
 ]);
+const routerAbi = parseAbi([
+  "function router() view returns (address)",
+]);
+const pendleRouterConstAbi = parseAbi([
+  "function PENDLE_ROUTER() view returns (address)",
+]);
+const routerConstAbi = parseAbi([
+  "function ROUTER() view returns (address)",
+]);
+const pendleMarketAbi = parseAbi([
+  "function market() view returns (address)",
+]);
+const pendleMarketAltAbi = parseAbi([
+  "function pendleMarket() view returns (address)",
+]);
+const pendleMarketConstAbi = parseAbi([
+  "function MARKET() view returns (address)",
+]);
+const pendlePtAbi = parseAbi([
+  "function pt() view returns (address)",
+]);
+const pendlePtAltAbi = parseAbi([
+  "function PT() view returns (address)",
+]);
+const principalTokenAbi = parseAbi([
+  "function principalToken() view returns (address)",
+]);
+const pendleReadStateAbi = parseAbi([
+  "function readState(address router) view returns ((int256 totalPt, int256 totalSy, int256 totalLp, address treasury, int256 scalarRoot, uint256 expiry, uint256 lnFeeRateRoot, uint256 reserveFeePercent, uint256 lastLnImpliedRate) market)",
+]);
 const marketIdAbi = parseAbi([
   "function marketId() view returns (bytes32)",
 ]);
 const collateralTokenAbi = parseAbi([
   "function collateralToken() view returns (address)",
 ]);
+
+const PENDLE_API_BASE_URL = "https://api-v2.pendle.finance/core/v1";
+const PENDLE_API_CACHE_TTL_MS = 60_000;
+const pendleApiCache = new Map<
+  string,
+  {
+    fetchedAt: number;
+    entries: Array<{ pt: string; market: string; apy: number | null }>;
+  }
+>();
 
 const clients: Map<number, PublicClient> = new Map();
 let _sourceConfig: OnchainSourceConfig | undefined;
@@ -167,6 +208,54 @@ async function probeBytes32(
   }
 }
 
+async function probePendleMarket(
+  address: Address,
+  chainId: number,
+): Promise<Address | null> {
+  const market = await probeAddress(address, chainId, pendleMarketAbi, "market");
+  if (market) return market;
+  const alt = await probeAddress(address, chainId, pendleMarketAltAbi, "pendleMarket");
+  if (alt) return alt;
+  return probeAddress(address, chainId, pendleMarketConstAbi, "MARKET");
+}
+
+async function probePendlePt(
+  address: Address,
+  chainId: number,
+): Promise<Address | null> {
+  const principalToken = await probeAddress(address, chainId, principalTokenAbi, "principalToken");
+  if (principalToken) return principalToken;
+  const pt = await probeAddress(address, chainId, pendlePtAbi, "pt");
+  if (pt) return pt;
+  return probeAddress(address, chainId, pendlePtAltAbi, "PT");
+}
+
+async function probePendleRouter(
+  address: Address,
+  chainId: number,
+): Promise<Address | null> {
+  const pendleRouter = await probeAddress(address, chainId, pendleRouterAbi, "pendleRouter");
+  if (pendleRouter) return pendleRouter;
+  const router = await probeAddress(address, chainId, routerAbi, "router");
+  if (router) return router;
+  const pendleRouterConst = await probeAddress(address, chainId, pendleRouterConstAbi, "PENDLE_ROUTER");
+  if (pendleRouterConst) return pendleRouterConst;
+  return probeAddress(address, chainId, routerConstAbi, "ROUTER");
+}
+
+function parseAddressRef(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const raw = value.trim();
+  if (!raw) return null;
+  const candidate = raw.includes("-") ? raw.split("-").pop() ?? "" : raw;
+  if (!candidate.startsWith("0x")) return null;
+  try {
+    return getAddress(candidate);
+  } catch {
+    return null;
+  }
+}
+
 export async function getContractName(
   address: string,
   chainId: number,
@@ -193,6 +282,8 @@ export interface ClassificationMeta {
   remote_vault_type?: string;
   morpho?: string;
   market_id?: string;
+  market?: string;
+  pt?: string;
   aToken?: string;
   pendle_router?: string;
   collateral?: { address: string; name: string };
@@ -264,12 +355,15 @@ export async function classifyAddress(
   if (leverageRatio !== null) {
     const morphoAddr = await probeAddress(addr, chainId, morphoAbi, "morpho");
     const aTokenAddr = await probeAddress(addr, chainId, aTokenAbi, "aToken");
-    const pendleAddr = await probeAddress(
-      addr,
-      chainId,
-      pendleRouterAbi,
-      "pendleRouter",
-    );
+    let pendleAddr = await probePendleRouter(addr, chainId);
+    let market = await probePendleMarket(addr, chainId);
+    const pt = await probePendlePt(addr, chainId);
+    if (!market && pt) {
+      market = await probePendleMarket(pt, chainId);
+    }
+    if (!pendleAddr && pt) {
+      pendleAddr = await probePendleRouter(pt, chainId);
+    }
     const marketId = await probeBytes32(addr, chainId, marketIdAbi, "marketId");
 
     let baseType = "looper";
@@ -282,8 +376,11 @@ export async function classifyAddress(
       meta.aToken = aTokenAddr;
     }
 
-    if (pendleAddr !== null) {
-      meta.pendle_router = pendleAddr;
+    const hasPendleSignal = pendleAddr !== null || market !== null || pt !== null;
+    if (hasPendleSignal) {
+      if (pendleAddr) meta.pendle_router = pendleAddr;
+      if (market) meta.market = market;
+      if (pt) meta.pt = pt;
       meta.type = `pt-${baseType}`;
     } else {
       meta.type = baseType;
@@ -305,15 +402,21 @@ export async function classifyAddress(
     return meta;
   }
 
-  const pendleAddr = await probeAddress(
-    addr,
-    chainId,
-    pendleRouterAbi,
-    "pendleRouter",
-  );
-  if (pendleAddr !== null) {
+  let pendleAddr = await probePendleRouter(addr, chainId);
+  let market = await probePendleMarket(addr, chainId);
+  const pt = await probePendlePt(addr, chainId);
+  if (!market && pt) {
+    market = await probePendleMarket(pt, chainId);
+  }
+  if (!pendleAddr && pt) {
+    pendleAddr = await probePendleRouter(pt, chainId);
+  }
+  const hasPendleSignal = pendleAddr !== null || market !== null || pt !== null;
+  if (hasPendleSignal) {
     meta.type = "pt";
-    meta.pendle_router = pendleAddr;
+    if (pendleAddr) meta.pendle_router = pendleAddr;
+    if (market) meta.market = market;
+    if (pt) meta.pt = pt;
   }
 
   return meta;
@@ -370,6 +473,20 @@ export async function getVaultTotalSupply(vault: string, chainId: number): Promi
       address: getAddress(vault),
       abi: vaultAbi,
       functionName: "totalSupply",
+    });
+  } catch {
+    return 0n;
+  }
+}
+
+export async function getVaultProfitMaxUnlockTime(vault: string, chainId: number): Promise<bigint> {
+  const client = getViemClient(chainId);
+  if (!client) return 0n;
+  try {
+    return await client.readContract({
+      address: getAddress(vault),
+      abi: vaultAbi,
+      functionName: "profitMaxUnlockTime",
     });
   } catch {
     return 0n;
@@ -510,6 +627,159 @@ export async function getStrategyLeverageRatio(strategy: string, chainId: number
   );
   if (current !== null) return current;
   return probeUint(getAddress(strategy), chainId, targetLeverageAbi, "targetLeverageRatio");
+}
+
+export async function getStrategyPendleMarket(
+  strategy: string,
+  chainId: number,
+): Promise<string | null> {
+  const market = await probePendleMarket(getAddress(strategy), chainId);
+  return market ?? null;
+}
+
+export async function getStrategyPendleRouter(
+  strategy: string,
+  chainId: number,
+): Promise<string | null> {
+  const router = await probePendleRouter(getAddress(strategy), chainId);
+  return router ?? null;
+}
+
+export async function getPendleMarketApyFromApi(
+  chainId: number,
+  ptAddress: string,
+): Promise<{ market: string | null; apyRaw: bigint | null }> {
+  if (!Number.isFinite(chainId) || chainId <= 0) {
+    return { market: null, apyRaw: null };
+  }
+
+  let normalizedPt: string;
+  try {
+    normalizedPt = getAddress(ptAddress).toLowerCase();
+  } catch {
+    return { market: null, apyRaw: null };
+  }
+
+  const cacheKey = String(chainId);
+  const now = Date.now();
+  let cached = pendleApiCache.get(cacheKey);
+
+  if (!cached || now - cached.fetchedAt > PENDLE_API_CACHE_TTL_MS) {
+    try {
+      const url = `${PENDLE_API_BASE_URL}/${chainId}/markets/active`;
+      const response = await fetch(url, { method: "GET", headers: { accept: "application/json" } });
+      if (!response.ok) {
+        return { market: null, apyRaw: null };
+      }
+
+      const payload = await response.json() as { markets?: unknown[] };
+      const markets = Array.isArray(payload?.markets) ? payload.markets : [];
+      const entries: Array<{ pt: string; market: string; apy: number | null }> = [];
+
+      for (const item of markets) {
+        if (typeof item !== "object" || item === null) continue;
+        const record = item as Record<string, unknown>;
+
+        const market = parseAddressRef(record.address);
+        const pt = parseAddressRef(record.pt);
+        if (!market || !pt) continue;
+
+        let apy: number | null = null;
+        const details = record.details;
+        if (typeof details === "object" && details !== null) {
+          const detailsRec = details as Record<string, unknown>;
+          const pendleApy = detailsRec.pendleApy;
+          if (typeof pendleApy === "number" && Number.isFinite(pendleApy)) {
+            apy = pendleApy;
+          }
+        } else {
+          const pendleApy = record.pendleApy;
+          if (typeof pendleApy === "number" && Number.isFinite(pendleApy)) {
+            apy = pendleApy;
+          }
+        }
+
+        entries.push({ pt: pt.toLowerCase(), market, apy });
+      }
+
+      cached = { fetchedAt: now, entries };
+      pendleApiCache.set(cacheKey, cached);
+    } catch {
+      return { market: null, apyRaw: null };
+    }
+  }
+
+  const match = cached.entries.find((entry) => entry.pt === normalizedPt);
+  if (!match) return { market: null, apyRaw: null };
+
+  let apyRaw: bigint | null = null;
+  if (match.apy !== null) {
+    try {
+      apyRaw = BigInt(Math.round(match.apy * Number(ONE)));
+    } catch {
+      apyRaw = null;
+    }
+  }
+
+  return { market: match.market, apyRaw };
+}
+
+export function lnImpliedRateToApyRaw(lnImpliedRate: bigint): bigint {
+  if (lnImpliedRate <= 0n) return 0n;
+  try {
+    const ln = Number(lnImpliedRate) / Number(ONE);
+    const apy = Math.expm1(ln);
+    if (!Number.isFinite(apy)) {
+      return lnImpliedRate > 0n ? lnImpliedRate : 0n;
+    }
+    const result = BigInt(Math.round(apy * Number(ONE)));
+    return result > 0n ? result : 0n;
+  } catch {
+    return lnImpliedRate > 0n ? lnImpliedRate : 0n;
+  }
+}
+
+export async function getPendleMarketImpliedApy(
+  market: string,
+  router: string,
+  chainId: number,
+): Promise<bigint | null> {
+  const client = getViemClient(chainId);
+  if (!client) return null;
+
+  try {
+    const result = await client.readContract({
+      address: getAddress(market),
+      abi: pendleReadStateAbi,
+      functionName: "readState",
+      args: [getAddress(router)],
+    }) as unknown;
+
+    let lnImpliedRate: bigint | null = null;
+    if (Array.isArray(result) && typeof result[8] === "bigint") {
+      lnImpliedRate = result[8];
+    } else if (typeof result === "object" && result !== null) {
+      const state = result as Record<string, unknown>;
+      const direct = state.lastLnImpliedRate;
+      if (typeof direct === "bigint") {
+        lnImpliedRate = direct;
+      } else {
+        const nested = state.market;
+        if (typeof nested === "object" && nested !== null) {
+          const nestedState = nested as Record<string, unknown>;
+          const nestedRate = nestedState.lastLnImpliedRate;
+          if (typeof nestedRate === "bigint") {
+            lnImpliedRate = nestedRate;
+          }
+        }
+      }
+    }
+
+    if (lnImpliedRate === null) return null;
+    return lnImpliedRateToApyRaw(lnImpliedRate);
+  } catch {
+    return null;
+  }
 }
 
 export async function getMorphoMarketBorrowApy(

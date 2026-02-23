@@ -50,7 +50,9 @@ apr:
       '0xBc65ad17c5C0a2A4D159fa5a503f4992c7B545FE':
         type: offchain
         apr: 0.04
-    strategies: {}
+    strategies:
+      '0x5f9dba2805411a8382fdb4e69d4f2da8efaf1f89':
+        points: true
     chains:
       '1':
         start_block: 24271831
