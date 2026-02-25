@@ -58,8 +58,9 @@ export async function POST(request: NextRequest) {
       if (!aprSource && !lockerBonusAPR) continue;
 
       const netValue = netAPR?.apr ?? ((baseNetAPR?.apr ?? 0) + (lockerBonusAPR?.apr ?? 0));
+      const netApyValue = netAPR?.apy ?? ((baseNetAPR?.apy ?? 0) + (lockerBonusAPR?.apy ?? 0));
       outputs.push({ ...base, component: "netAPR", value: netValue });
-      outputs.push({ ...base, component: "netAPY", value: netAPR?.apy ?? 0 });
+      outputs.push({ ...base, component: "netAPY", value: netApyValue });
 
       if (aprSource) {
         const grossRaw = aprSource.meta?.gross_apr_raw as string | undefined;
