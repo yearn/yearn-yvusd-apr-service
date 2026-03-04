@@ -59,6 +59,9 @@ apr:
       '0x7130570BCEfCedBe9d15B5b11A33006156460f8f':
         type: offchain
         apr: 0.04
+      '0xa3931d71877C0E7a3148CB7Eb4463524FEc27fbD':
+        type: offchain
+        apr: 0.04
     strategies:
       '0x5f9dba2805411a8382fdb4e69d4f2da8efaf1f89':
         points: true
