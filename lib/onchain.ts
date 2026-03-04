@@ -383,7 +383,9 @@ export async function classifyAddress(
       meta.aToken = aTokenAddr;
     }
 
-    const hasPendleSignal = pendleAddr !== null || market !== null || pt !== null;
+    // router() exists on many non-Pendle contracts; only classify as Pendle
+    // when we can detect PT or market endpoints.
+    const hasPendleSignal = market !== null || pt !== null;
     if (hasPendleSignal) {
       if (pendleAddr) meta.pendle_router = pendleAddr;
       if (market) meta.market = market;
@@ -418,7 +420,8 @@ export async function classifyAddress(
   if (!pendleAddr && pt) {
     pendleAddr = await probePendleRouter(pt, chainId);
   }
-  const hasPendleSignal = pendleAddr !== null || market !== null || pt !== null;
+  // router() alone is too weak; require PT or market for Pendle classification.
+  const hasPendleSignal = market !== null || pt !== null;
   if (hasPendleSignal) {
     meta.type = "pt";
     if (pendleAddr) meta.pendle_router = pendleAddr;
