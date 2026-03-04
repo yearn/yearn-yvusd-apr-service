@@ -37,6 +37,14 @@ const OFFCHAIN_TYPES = new Set([
 const MORPHO_LOOPER_TYPES = new Set(["morpho", "morpho-looper"]);
 const MORPHO_STRATEGY_TYPES = new Set(["morpho-looper", "pt-morpho-looper"]);
 const DEFAULT_HISTORICAL_WINDOW_SECONDS = 7 * 24 * 60 * 60;
+const CHAIN_MORPHO_ADDRESSES: Record<number, string> = {
+  1: "0xBBBBBbbBBb9cC5e90e3b3Af64bdAF62C37EEFFCb",
+  137: "0x1bF0c2541F820E775182832f06c0B7Fc27A25f67",
+  100: "0xce95AfbB8EA029495c66020883F87aaE8864AF92",
+  8453: "0xBBBBBbbBBb9cC5e90e3b3Af64bdAF62C37EEFFCb",
+  42161: "0x6c247b1F6182318877311737BaC0844bAa518F5e",
+  747474: "0xD50F2DffFd62f94Ee4AEd9ca05C61d0753268aBc",
+};
 
 export interface FeeConfig {
   managementFee: number;
@@ -500,6 +508,9 @@ export class YvUsdAprEngine {
     }
     if (!morpho) {
       morpho = (await getStrategyMorpho(entry.address, chainId)) ?? "";
+    }
+    if (!morpho) {
+      morpho = CHAIN_MORPHO_ADDRESSES[chainId] ?? "";
     }
     if (!marketId || !morpho) return null;
 

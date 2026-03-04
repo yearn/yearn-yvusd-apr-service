@@ -208,6 +208,12 @@ async function probeBytes32(
   }
 }
 
+function isValidNonZeroBytes32(value: string | null): value is `0x${string}` {
+  if (!value) return false;
+  if (!/^0x[0-9a-fA-F]{64}$/.test(value)) return false;
+  return value !== `0x${"0".repeat(64)}`;
+}
+
 async function probePendleMarket(
   address: Address,
   chainId: number,
@@ -353,6 +359,8 @@ export async function classifyAddress(
     "targetLeverageRatio",
   );
   if (leverageRatio !== null) {
+    const marketId = await probeBytes32(addr, chainId, marketIdAbi, "marketId");
+    const hasMorphoMarketId = isValidNonZeroBytes32(marketId);
     const morphoAddr = await probeAddress(addr, chainId, morphoAbi, "morpho");
     const aTokenAddr = await probeAddress(addr, chainId, aTokenAbi, "aToken");
     let pendleAddr = await probePendleRouter(addr, chainId);
@@ -364,13 +372,12 @@ export async function classifyAddress(
     if (!pendleAddr && pt) {
       pendleAddr = await probePendleRouter(pt, chainId);
     }
-    const marketId = await probeBytes32(addr, chainId, marketIdAbi, "marketId");
 
     let baseType = "looper";
-    if (morphoAddr !== null) {
+    if (hasMorphoMarketId) {
       baseType = "morpho-looper";
-      meta.morpho = morphoAddr;
-      if (marketId) meta.market_id = marketId;
+      meta.market_id = marketId;
+      if (morphoAddr) meta.morpho = morphoAddr;
     } else if (aTokenAddr !== null) {
       baseType = "aave-looper";
       meta.aToken = aTokenAddr;

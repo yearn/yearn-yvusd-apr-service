@@ -47,7 +47,16 @@ apr:
     hardcoded_aprs:
       '0xDBDC1Ef57537E34680B898E1FEBD3D68c7389bCB':
         type: historical
+      '0x80ac24aA929eaF5013f6436cdA2a7ba190f5Cc0b':
+        type: historical
+      '0x356B8d89c1e1239Cbbb9dE4815c39A1474d5BA7D':
+        type: historical
+      '0xC58D044404d8B14e953C115E67823784dEA53d8F':
+        type: historical
       '0xBc65ad17c5C0a2A4D159fa5a503f4992c7B545FE':
+        type: offchain
+        apr: 0.04
+      '0x7130570BCEfCedBe9d15B5b11A33006156460f8f':
         type: offchain
         apr: 0.04
     strategies:
