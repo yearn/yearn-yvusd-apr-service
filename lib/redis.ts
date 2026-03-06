@@ -26,6 +26,10 @@ export async function writeCache(data: Record<string, unknown>): Promise<void> {
   await getClient().set(CACHE_KEY, JSON.stringify(data));
 }
 
+export async function clearCache(): Promise<void> {
+  await getClient().del(CACHE_KEY);
+}
+
 export async function readAprResult(): Promise<Record<string, unknown> | null> {
   const raw = await getClient().get(APR_RESULT_KEY);
   if (!raw) return null;

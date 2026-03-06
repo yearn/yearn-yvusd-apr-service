@@ -3,11 +3,11 @@ import { loadServiceConfig } from "@/lib/config";
 import { initOnchainClients } from "@/lib/onchain";
 import { syncAll } from "@/lib/strategy-store";
 import { computeAllVaultsApr } from "@/lib/apr-service";
-import { writeAprResult } from "@/lib/redis";
+import { writeAprResult, clearCache } from "@/lib/redis";
 
 export const maxDuration = 120;
 
-async function sync() {
+async function sync(reset: boolean = false) {
   const config = loadServiceConfig();
   const onchainCfg = config.apr.sources.onchain ?? {};
   initOnchainClients(onchainCfg);
@@ -22,6 +22,10 @@ async function sync() {
       chain_id: v.chain_id,
       symbol: v.symbol,
     }));
+
+  if (reset) {
+    await clearCache();
+  }
 
   const results = await syncAll(vaults, cacheConfig);
 
@@ -49,7 +53,8 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    const result = await sync();
+    const reset = request.nextUrl.searchParams.get("reset") === "true";
+    const result = await sync(reset);
     return NextResponse.json(result);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
