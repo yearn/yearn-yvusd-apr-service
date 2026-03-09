@@ -1,5 +1,5 @@
 import type { AprConfig } from "./config";
-import type { VaultAprResult, AprResultEnvelope } from "./models";
+import type { VaultAprResult } from "./models";
 import { initOnchainClients, getErc4626Asset, getVaultProfitMaxUnlockTime } from "./onchain";
 import { YvUsdAprEngine } from "./apr-engine";
 import { getCalculator } from "./calculators";

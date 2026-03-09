@@ -102,6 +102,14 @@ export default async function Home() {
           </li>
           <li className="flex items-start gap-3">
             <code className="bg-zinc-900 rounded px-2 py-1 font-mono text-sm text-zinc-300 shrink-0">
+              GET /api/aprs/{'<address>'}
+            </code>
+            <span className="text-zinc-500 text-sm">
+              APR for a single vault by address
+            </span>
+          </li>
+          <li className="flex items-start gap-3">
+            <code className="bg-zinc-900 rounded px-2 py-1 font-mono text-sm text-zinc-300 shrink-0">
               GET /api/snapshot
             </code>
             <span className="text-zinc-500 text-sm">
@@ -112,7 +120,9 @@ export default async function Home() {
             <code className="bg-zinc-900 rounded px-2 py-1 font-mono text-sm text-zinc-300 shrink-0">
               GET /api/health
             </code>
-            <span className="text-zinc-500 text-sm">Health check</span>
+            <span className="text-zinc-500 text-sm">
+              Health check (Redis + data freshness)
+            </span>
           </li>
         </ul>
       </section>

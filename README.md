@@ -57,11 +57,22 @@ bun start        # production server
 
 ### `GET /api/health`
 
-Health check.
+Health check. Verifies Redis connectivity and data freshness.
+
+Returns `200` when healthy or degraded, `503` when Redis is unreachable.
 
 ```json
-{ "status": "ok", "timestamp": "2026-02-13T12:00:00.000Z" }
+{
+  "status": "ok",
+  "timestamp": "2026-02-13T12:00:00.000Z",
+  "checks": {
+    "redis": { "status": "ok" },
+    "data": { "status": "ok", "detail": "Last computed 5m ago" }
+  }
+}
 ```
+
+Possible `status` values: `ok`, `degraded` (stale data or empty), `error` (Redis down).
 
 ### `GET /api/sync`
 
@@ -100,7 +111,7 @@ In production, requires `Authorization: Bearer <CRON_SECRET>` header (Vercel sen
 
 ### `GET /api/aprs`
 
-Returns precomputed APR results from Redis. No onchain calls — instant response.
+Returns precomputed APR results for all vaults from Redis. No onchain calls — instant response.
 
 Returns `404` if sync has not been run yet.
 
@@ -128,6 +139,29 @@ Returns `404` if sync has not been run yet.
       { "label": "locker_bonus_apr", "apr": 0.017, "source": "onchain" }
     ]
   }
+}
+```
+
+### `GET /api/aprs/<address>`
+
+Returns APR data for a single vault by contract address. Case-insensitive.
+
+Returns `400` for invalid addresses, `404` if the vault is not found.
+
+**Response**
+
+```json
+{
+  "name": "yvUSD",
+  "symbol": "yvUSD",
+  "address": "0x696d...",
+  "chain_id": 1,
+  "apr": 0.045,
+  "apy": 0.046,
+  "components": [
+    { "label": "net_apr", "apr": 0.045, "apy": 0.046, "source": "onchain" }
+  ],
+  "computed_at": "2026-02-13T12:00:00.000Z"
 }
 ```
 
@@ -223,6 +257,7 @@ Returns the raw strategy cache from Redis (indexed strategy metadata, not APRs).
 │       ├── health/route.ts        GET  /api/health
 │       ├── sync/route.ts           GET  /api/sync
 │       ├── aprs/route.ts          GET  /api/aprs
+│       ├── aprs/[address]/route.ts GET  /api/aprs/<address>
 │       └── snapshot/route.ts      GET  /api/snapshot
 ├── lib/
 │   ├── onchain.ts           viem clients, ABIs, multicall, contract reads
