@@ -62,6 +62,13 @@ apr:
       '0xa3931d71877C0E7a3148CB7Eb4463524FEc27fbD':
         type: offchain
         apr: 0.04
+      # syrupUSDC on Arbitrum — collateral for syrupUSDC/USDC morpho looper
+      # Uses Morpho oracle price growth to estimate yield (not ERC4626)
+      '0x41CA7586cC1311807B4605fBB748a3B8862b42b5':
+        type: oracle-growth
+        oracle: '0x8f30fF3d54e69D4dfD5E99a9937474FaDdf27009'
+        window_seconds: 604800
+        fallback_apr: 0.04
     strategies:
       '0x5f9dba2805411a8382fdb4e69d4f2da8efaf1f89':
         points: true
