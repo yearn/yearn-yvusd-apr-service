@@ -32,6 +32,8 @@ const aprOracleAbi = parseAbi([
 
 const lockedYvusdAbi = parseAbi([
   "function feeConfig() view returns (uint16 managementFee, uint16 performanceFee, uint16 lockerBonus)",
+  "function cooldownDuration() view returns (uint256)",
+  "function withdrawWindow() view returns (uint256)",
 ]);
 
 const erc4626Abi = parseAbi([
@@ -552,19 +554,37 @@ export async function getStrategyApr(
 export async function getLockedFeeConfig(
   lockedVault: string,
   chainId: number,
-): Promise<{ managementFee: number; performanceFee: number; lockerBonus: number } | null> {
+): Promise<{
+  managementFee: number;
+  performanceFee: number;
+  lockerBonus: number;
+  cooldownDuration: number;
+  withdrawWindow: number;
+} | null> {
   const client = getViemClient(chainId);
   if (!client) return null;
   try {
-    const result = await client.readContract({
+    const feeResult = await client.readContract({
       address: getAddress(lockedVault),
       abi: lockedYvusdAbi,
       functionName: "feeConfig",
     });
+    const cooldownResult = await client.readContract({
+      address: getAddress(lockedVault),
+      abi: lockedYvusdAbi,
+      functionName: "cooldownDuration",
+    });
+    const withdrawWindowResult = await client.readContract({
+      address: getAddress(lockedVault),
+      abi: lockedYvusdAbi,
+      functionName: "withdrawWindow",
+    });
     return {
-      managementFee: Number(result[0]),
-      performanceFee: Number(result[1]),
-      lockerBonus: Number(result[2]),
+      managementFee: Number(feeResult[0]),
+      performanceFee: Number(feeResult[1]),
+      lockerBonus: Number(feeResult[2]),
+      cooldownDuration: Number(cooldownResult),
+      withdrawWindow: Number(withdrawWindowResult),
     };
   } catch {
     return null;
@@ -976,7 +996,13 @@ export async function getHistoricalConvertToAssetsApr(
 export interface FetchVaultAprDataResult {
   totalAssets: bigint;
   totalSupply: bigint;
-  feeConfig: { managementFee: number; performanceFee: number; lockerBonus: number } | null;
+  feeConfig: {
+    managementFee: number;
+    performanceFee: number;
+    lockerBonus: number;
+    cooldownDuration: number;
+    withdrawWindow: number;
+  } | null;
   strategyDebts: Map<string, bigint>;
   strategyAprs: Map<string, bigint | null>;
 }
@@ -1036,13 +1062,23 @@ export async function fetchVaultAprData(
     }
   }
 
-  // last: feeConfig if lockedVault provided
+  // last: locked vault settings if lockedVault provided
   const hasFeeConfig = !!lockedVault;
   if (hasFeeConfig) {
     contracts.push({
       address: getAddress(lockedVault!),
       abi: lockedYvusdAbi as readonly unknown[],
       functionName: "feeConfig",
+    });
+    contracts.push({
+      address: getAddress(lockedVault!),
+      abi: lockedYvusdAbi as readonly unknown[],
+      functionName: "cooldownDuration",
+    });
+    contracts.push({
+      address: getAddress(lockedVault!),
+      abi: lockedYvusdAbi as readonly unknown[],
+      functionName: "withdrawWindow",
     });
   }
 
@@ -1084,13 +1120,21 @@ export async function fetchVaultAprData(
 
     let feeConfig: FetchVaultAprDataResult["feeConfig"] = null;
     if (hasFeeConfig) {
-      const feeIdx = contracts.length - 1;
-      if (results[feeIdx].status === "success") {
+      const feeIdx = contracts.length - 3;
+      const cooldownIdx = contracts.length - 2;
+      const withdrawWindowIdx = contracts.length - 1;
+      if (
+        results[feeIdx].status === "success" &&
+        results[cooldownIdx].status === "success" &&
+        results[withdrawWindowIdx].status === "success"
+      ) {
         const r = results[feeIdx].result as readonly [number, number, number];
         feeConfig = {
           managementFee: Number(r[0]),
           performanceFee: Number(r[1]),
           lockerBonus: Number(r[2]),
+          cooldownDuration: Number(results[cooldownIdx].result),
+          withdrawWindow: Number(results[withdrawWindowIdx].result),
         };
       }
     }

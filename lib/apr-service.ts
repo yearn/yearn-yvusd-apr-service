@@ -1,6 +1,11 @@
 import type { AprConfig } from "./config";
 import type { VaultAprResult } from "./models";
-import { initOnchainClients, getErc4626Asset, getVaultProfitMaxUnlockTime } from "./onchain";
+import {
+  initOnchainClients,
+  getErc4626Asset,
+  getLockedFeeConfig,
+  getVaultProfitMaxUnlockTime,
+} from "./onchain";
 import { YvUsdAprEngine } from "./apr-engine";
 import { getCalculator } from "./calculators";
 import { aprToApy, unlockTimeToPeriodsPerYear } from "./apy";
@@ -52,6 +57,17 @@ export async function computeAllVaultsApr(
 
     if (strategiesMeta && vault.symbol.toLowerCase() !== "lockedyvusd") {
       payload.meta = { ...(payload.meta ?? {}), strategies: strategiesMeta };
+    }
+
+    if (vault.symbol.toLowerCase() === "lockedyvusd") {
+      const lockedConfig = await getLockedFeeConfig(vault.address, vault.chain_id);
+      if (lockedConfig) {
+        payload.meta = {
+          ...(payload.meta ?? {}),
+          cooldownDuration: lockedConfig.cooldownDuration,
+          withdrawWindow: lockedConfig.withdrawWindow,
+        };
+      }
     }
 
     if (vault.symbol.toLowerCase() === "yvusd") {
