@@ -50,6 +50,8 @@ export interface FeeConfig {
   managementFee: number;
   performanceFee: number;
   lockerBonus: number;
+  cooldownDuration: number;
+  withdrawWindow: number;
 }
 
 type CustomResult = [bigint | null, bigint | null, FeeConfig | null, Record<string, unknown>[]];
@@ -139,7 +141,18 @@ export class YvUsdAprEngine {
 
       const totalAssets = batchData.totalAssets;
       if (totalAssets === 0n) {
-        const result: CustomResult = [0n, 0n, { managementFee: 0, performanceFee: 0, lockerBonus: 0 }, []];
+        const result: CustomResult = [
+          0n,
+          0n,
+          {
+            managementFee: 0,
+            performanceFee: 0,
+            lockerBonus: 0,
+            cooldownDuration: 0,
+            withdrawWindow: 0,
+          },
+          [],
+        ];
         this._customCache.set(key, result);
         return result;
       }
@@ -192,7 +205,14 @@ export class YvUsdAprEngine {
         });
       }
 
-      const feeConfig = batchData.feeConfig ?? { managementFee: 0, performanceFee: 0, lockerBonus: 0 };
+      const feeConfig = batchData.feeConfig ??
+        {
+          managementFee: 0,
+          performanceFee: 0,
+          lockerBonus: 0,
+          cooldownDuration: 0,
+          withdrawWindow: 0,
+        };
       const netApr = this._applyLockedFees(totalApr, feeConfig);
 
       const result: CustomResult = [totalApr, netApr, feeConfig, strategyMeta];

@@ -1,9 +1,16 @@
 import type { AprConfig } from "./config";
 import type { VaultAprResult } from "./models";
-import { initOnchainClients, getErc4626Asset, getVaultProfitMaxUnlockTime } from "./onchain";
+import {
+  initOnchainClients,
+  getErc4626Asset,
+  getLockedFeeConfig,
+  getVaultProfitMaxUnlockTime,
+} from "./onchain";
 import { YvUsdAprEngine } from "./apr-engine";
 import { getCalculator } from "./calculators";
 import { aprToApy, unlockTimeToPeriodsPerYear } from "./apy";
+
+const LOCKED_YVUSD_ADDRESS = "0xaaafea48472f77563961cdb53291dedfb46f9040";
 
 export async function computeAllVaultsApr(
   config: AprConfig,
@@ -15,6 +22,7 @@ export async function computeAllVaultsApr(
   const results: Record<string, VaultAprResult> = {};
 
   for (const vault of config.vaults) {
+    const isLockedYvUsd = vault.address.toLowerCase() === LOCKED_YVUSD_ADDRESS;
     const components = [];
 
     for (const strat of vault.strategies) {
@@ -51,8 +59,19 @@ export async function computeAllVaultsApr(
       }
     }
 
-    if (strategiesMeta && vault.symbol.toLowerCase() !== "lockedyvusd") {
+    if (strategiesMeta && !isLockedYvUsd) {
       payload.meta = { ...(payload.meta ?? {}), strategies: strategiesMeta };
+    }
+
+    if (isLockedYvUsd) {
+      const lockedConfig = await getLockedFeeConfig(vault.address, vault.chain_id);
+      if (lockedConfig) {
+        payload.meta = {
+          ...(payload.meta ?? {}),
+          cooldownDuration: lockedConfig.cooldownDuration,
+          withdrawWindow: lockedConfig.withdrawWindow,
+        };
+      }
     }
 
     if (vault.symbol.toLowerCase() === "yvusd") {

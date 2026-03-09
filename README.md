@@ -137,7 +137,8 @@ Returns `404` if sync has not been run yet.
     "components": [
       { "label": "base_net_apr", "apr": 0.045, "source": "onchain" },
       { "label": "locker_bonus_apr", "apr": 0.017, "source": "onchain" }
-    ]
+    ],
+    "meta": { "cooldownDuration": 864000, "withdrawWindow": 172800 }
   }
 }
 ```
