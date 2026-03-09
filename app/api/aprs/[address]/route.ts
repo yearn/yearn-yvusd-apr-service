@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { isAddress } from "viem";
 import { readVaultAprs } from "@/lib/redis";
 
 export async function GET(
@@ -7,7 +8,15 @@ export async function GET(
 ) {
   const { address } = await params;
 
+  if (!isAddress(address)) {
+    return NextResponse.json(
+      { error: "Invalid Ethereum address format" },
+      { status: 400 },
+    );
+  }
+
   try {
+    // readVaultAprs lowercases internally, so case-insensitive lookup works
     const [result] = await readVaultAprs([address]);
 
     if (!result) {

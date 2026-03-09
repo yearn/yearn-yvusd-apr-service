@@ -8,7 +8,7 @@ export async function GET() {
   // Check Redis connectivity + data freshness
   try {
     const data = await readAprResult();
-    if (data) {
+    if (data && Object.keys(data).length > 0) {
       // Check freshness from any vault's computed_at
       const anyVault = Object.values(data)[0] as Record<string, unknown> | undefined;
       const computedAt = anyVault?.computed_at as string | undefined;
