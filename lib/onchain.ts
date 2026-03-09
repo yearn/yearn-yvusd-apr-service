@@ -34,6 +34,10 @@ const lockedYvusdAbi = parseAbi([
   "function feeConfig() view returns (uint16 managementFee, uint16 performanceFee, uint16 lockerBonus)",
 ]);
 
+const morphoOracleAbi = parseAbi([
+  "function price() view returns (uint256)",
+]);
+
 const erc4626Abi = parseAbi([
   "function totalAssets() view returns (uint256)",
   "function asset() view returns (address)",
@@ -971,6 +975,59 @@ export async function getHistoricalConvertToAssetsApr(
     if (apr !== null) return apr;
   }
   return null;
+}
+
+export async function getOracleGrowthApr(
+  oracleAddress: string,
+  chainId: number,
+  windowSeconds: number = 7 * 24 * 60 * 60,
+): Promise<bigint | null> {
+  const client = getViemClient(chainId);
+  if (!client) return null;
+
+  try {
+    const latestBlockNum = await client.getBlockNumber();
+    const latestBlockData = await getBlock(chainId, latestBlockNum);
+    if (!latestBlockData) return null;
+
+    const currentPrice = await client.readContract({
+      address: getAddress(oracleAddress),
+      abi: morphoOracleAbi,
+      functionName: "price",
+    });
+    if (!currentPrice || currentPrice <= 0n) return null;
+
+    const targetTs = latestBlockData.timestamp - BigInt(windowSeconds);
+    if (targetTs <= 0n) return null;
+
+    const oldBlockNum = await findBlockAtOrBeforeTimestamp(chainId, targetTs, latestBlockNum);
+    if (oldBlockNum === null) return null;
+
+    const oldBlockData = await getBlock(chainId, oldBlockNum);
+    if (!oldBlockData) return null;
+
+    const oldPrice = await client.readContract({
+      address: getAddress(oracleAddress),
+      abi: morphoOracleAbi,
+      functionName: "price",
+      blockNumber: oldBlockNum,
+    });
+    if (!oldPrice || oldPrice <= 0n) return null;
+
+    const elapsed = Number(latestBlockData.timestamp - oldBlockData.timestamp);
+    if (elapsed <= 0) return null;
+
+    // APR = (currentPrice / oldPrice)^(secondsPerYear / elapsed) - 1
+    const growthRatio = Number(currentPrice) / Number(oldPrice);
+    if (growthRatio <= 0) return null;
+
+    const apr = Math.pow(growthRatio, SECONDS_PER_YEAR / elapsed) - 1.0;
+    if (!Number.isFinite(apr)) return null;
+
+    return BigInt(Math.round(apr * Number(ONE)));
+  } catch {
+    return null;
+  }
 }
 
 export interface FetchVaultAprDataResult {

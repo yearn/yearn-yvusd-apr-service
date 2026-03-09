@@ -5,6 +5,7 @@ import {
   getErc4626TotalAssets,
   getStrategyApr,
   getHistoricalConvertToAssetsApr,
+  getOracleGrowthApr,
   getStrategyMarketId,
   getStrategyMorpho,
   getStrategyLeverageRatio,
@@ -348,6 +349,9 @@ export class YvUsdAprEngine {
     if (mode === "historical") {
       return this._getHistoricalOffchainApr(entry, chainId, cfg);
     }
+    if (mode === "oracle-growth") {
+      return this._getOracleGrowthOffchainApr(entry, chainId, cfg);
+    }
     if (mode === "pt-estimated" || mode === "pt") {
       return this._getPtEstimatedOffchainApr(entry, chainId, cfg);
     }
@@ -421,6 +425,26 @@ export class YvUsdAprEngine {
     }
 
     return getHistoricalConvertToAssetsApr(address, chainId, Number(windowSeconds), sharesRaw);
+  }
+
+  private async _getOracleGrowthOffchainApr(
+    entry: StrategyEntry,
+    chainId: number,
+    cfg: Record<string, unknown>,
+  ): Promise<bigint | null> {
+    const oracleAddress = String(cfg.oracle ?? "").trim();
+    if (!oracleAddress) return null;
+
+    let windowSeconds = parseIntValue(cfg.window_seconds);
+    if (windowSeconds === null || windowSeconds <= 0n) {
+      windowSeconds = BigInt(DEFAULT_HISTORICAL_WINDOW_SECONDS);
+    }
+
+    const apr = await getOracleGrowthApr(oracleAddress, chainId, Number(windowSeconds));
+    if (apr !== null) return apr;
+
+    // Fallback to static APR if provided and no history yet
+    return parseAprValue(cfg, "fallback_apr_raw", "fallback_apr");
   }
 
   private async _getMorphoLooperOffchainApr(
