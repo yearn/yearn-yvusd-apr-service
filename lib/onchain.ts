@@ -1064,17 +1064,23 @@ export async function fetchVaultAprData(
 
   // last: locked vault settings if lockedVault provided
   const hasFeeConfig = !!lockedVault;
+  let feeConfigIdx = -1;
+  let cooldownIdx = -1;
+  let withdrawWindowIdx = -1;
   if (hasFeeConfig) {
+    feeConfigIdx = contracts.length;
     contracts.push({
       address: getAddress(lockedVault!),
       abi: lockedYvusdAbi as readonly unknown[],
       functionName: "feeConfig",
     });
+    cooldownIdx = contracts.length;
     contracts.push({
       address: getAddress(lockedVault!),
       abi: lockedYvusdAbi as readonly unknown[],
       functionName: "cooldownDuration",
     });
+    withdrawWindowIdx = contracts.length;
     contracts.push({
       address: getAddress(lockedVault!),
       abi: lockedYvusdAbi as readonly unknown[],
@@ -1119,22 +1125,19 @@ export async function fetchVaultAprData(
     }
 
     let feeConfig: FetchVaultAprDataResult["feeConfig"] = null;
-    if (hasFeeConfig) {
-      const feeIdx = contracts.length - 3;
-      const cooldownIdx = contracts.length - 2;
-      const withdrawWindowIdx = contracts.length - 1;
-      if (
-        results[feeIdx].status === "success" &&
-        results[cooldownIdx].status === "success" &&
-        results[withdrawWindowIdx].status === "success"
-      ) {
-        const r = results[feeIdx].result as readonly [number, number, number];
+    if (hasFeeConfig && feeConfigIdx >= 0) {
+      if (results[feeConfigIdx].status === "success") {
+        const r = results[feeConfigIdx].result as readonly [number, number, number];
         feeConfig = {
           managementFee: Number(r[0]),
           performanceFee: Number(r[1]),
           lockerBonus: Number(r[2]),
-          cooldownDuration: Number(results[cooldownIdx].result),
-          withdrawWindow: Number(results[withdrawWindowIdx].result),
+          cooldownDuration: cooldownIdx >= 0 && results[cooldownIdx].status === "success"
+            ? Number(results[cooldownIdx].result)
+            : 0,
+          withdrawWindow: withdrawWindowIdx >= 0 && results[withdrawWindowIdx].status === "success"
+            ? Number(results[withdrawWindowIdx].result)
+            : 0,
         };
       }
     }
