@@ -1017,11 +1017,10 @@ export async function getOracleGrowthApr(
     const elapsed = Number(latestBlockData.timestamp - oldBlockData.timestamp);
     if (elapsed <= 0) return null;
 
-    // APR = (currentPrice / oldPrice)^(secondsPerYear / elapsed) - 1
-    const growthRatio = Number(currentPrice) / Number(oldPrice);
-    if (growthRatio <= 0) return null;
-
-    const apr = Math.pow(growthRatio, SECONDS_PER_YEAR / elapsed) - 1.0;
+    // Linear APR = ((currentPrice - oldPrice) / oldPrice) * (secondsPerYear / elapsed)
+    const priceDelta = Number(currentPrice) - Number(oldPrice);
+    const growthRate = priceDelta / Number(oldPrice);
+    const apr = growthRate * (SECONDS_PER_YEAR / elapsed);
     if (!Number.isFinite(apr)) return null;
 
     return BigInt(Math.round(apr * Number(ONE)));
