@@ -1,5 +1,5 @@
 import type { AprConfig } from "./config";
-import type { VaultAprResult } from "./models";
+import type { VaultAprResult, AprResultEnvelope } from "./models";
 import { initOnchainClients, getErc4626Asset, getVaultProfitMaxUnlockTime } from "./onchain";
 import { YvUsdAprEngine } from "./apr-engine";
 import { getCalculator } from "./calculators";
@@ -10,6 +10,7 @@ export async function computeAllVaultsApr(
 ): Promise<Record<string, VaultAprResult>> {
   initOnchainClients(config.sources.onchain ?? {});
 
+  const computedAt = new Date().toISOString();
   const engine = new YvUsdAprEngine(config.strategy_cache);
   const results: Record<string, VaultAprResult> = {};
 
@@ -61,6 +62,7 @@ export async function computeAllVaultsApr(
       }
     }
 
+    payload.computed_at = computedAt;
     results[vault.address] = payload;
   }
 

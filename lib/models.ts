@@ -15,4 +15,10 @@ export interface VaultAprResult {
   apy: number;
   components: AprComponent[];
   meta?: Record<string, unknown>;
+  computed_at?: string;
+}
+
+export interface AprResultEnvelope {
+  vaults: Record<string, VaultAprResult>;
+  computed_at: string;
 }

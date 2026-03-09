@@ -117,6 +117,9 @@ const REGISTRY: Record<string, CalculatorFn> = {
 
 export function getCalculator(type: string): CalculatorFn {
   const fn = REGISTRY[type];
-  if (!fn) throw new Error(`Unknown strategy type: ${type}`);
+  if (!fn) {
+    console.warn(`Unknown strategy type: ${type} — skipping`);
+    return async () => [];
+  }
   return fn;
 }
