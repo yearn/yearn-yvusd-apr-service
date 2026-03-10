@@ -72,6 +72,15 @@ apr:
     strategies:
       '0x5f9dba2805411a8382fdb4e69d4f2da8efaf1f89':
         points: true
+      # Arb syrupUSDC/USDC Morpho Looper — remote vault for CCTP cross-chain strategy
+      # Metadata needed because cross-chain resolver can't hydrate from remote chain
+      '0xBCf08997C34183d1b7B0f99e13aCeACFBA88E453':
+        meta:
+          type: morpho-looper
+          market_id: '0xf86f3edd6f16cd8211f4d206866dc4ecd41be6211063ac11f8508e1b7112ef40'
+          collateral:
+            address: '0x41CA7586cC1311807B4605fBB748a3B8862b42b5'
+            name: Syrup USDC
     chains:
       '1':
         start_block: 24271831
