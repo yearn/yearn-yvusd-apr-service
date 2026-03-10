@@ -1,12 +1,12 @@
 import { readVaultAprs } from "@/lib/redis";
 import {
   findComponent,
-
   jsonResponseWithBigInt,
   type KongOutput,
   parseWebhookBody,
   verifyWebhookSignature,
 } from "@/lib/webhook-utils";
+import { ONE } from "@/lib/onchain";
 import { NextRequest, NextResponse } from "next/server";
 
 const YVUSD_ADDRESS = process.env.YVUSD_ADDRESS ?? "";
@@ -74,6 +74,23 @@ export async function POST(request: NextRequest) {
       if (lockerBonusAPR) {
         outputs.push({ ...base, component: "lockerBonusAPR", value: lockerBonusAPR.apr });
         outputs.push({ ...base, component: "lockerBonusAPY", value: lockerBonusAPR.apy });
+      }
+
+      // Per-strategy outputs (similar to v2-estimated-apr-hook)
+      const strategies = vault.meta?.strategies as Array<Record<string, unknown>> | undefined;
+      if (strategies) {
+        for (const strategy of strategies) {
+          const stratAddress = strategy.address as string;
+          if (!stratAddress) continue;
+
+          const stratBase = { ...base, address: stratAddress };
+          const netAprRaw = BigInt(String(strategy.net_apr_raw ?? "0"));
+          const netApr = Number(netAprRaw) / Number(ONE);
+          const weight = Number(strategy.weight ?? 0);
+
+          outputs.push({ ...stratBase, component: "netAPR", value: netApr });
+          outputs.push({ ...stratBase, component: "debtRatio", value: weight });
+        }
       }
     }
 
