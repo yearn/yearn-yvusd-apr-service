@@ -33,7 +33,7 @@ const aprOracleAbi = parseAbi([
 const lockedYvusdAbi = parseAbi([
   "function feeConfig() view returns (uint16 managementFee, uint16 performanceFee, uint16 lockerBonus)",
   "function cooldownDuration() view returns (uint256)",
-  "function withdrawWindow() view returns (uint256)",
+  "function withdrawalWindow() view returns (uint256)",
 ]);
 
 const morphoOracleAbi = parseAbi([
@@ -581,7 +581,7 @@ export async function getLockedFeeConfig(
     const withdrawWindowResult = await client.readContract({
       address: getAddress(lockedVault),
       abi: lockedYvusdAbi,
-      functionName: "withdrawWindow",
+      functionName: "withdrawalWindow",
     });
     return {
       managementFee: Number(feeResult[0]),
@@ -1140,7 +1140,7 @@ export async function fetchVaultAprData(
     contracts.push({
       address: getAddress(lockedVault!),
       abi: lockedYvusdAbi as readonly unknown[],
-      functionName: "withdrawWindow",
+      functionName: "withdrawalWindow",
     });
   }
 
