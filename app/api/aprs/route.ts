@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
-import { readAprResult } from "@/lib/redis";
+import { readAprResult, getSmoothedApr } from "@/lib/redis";
+import type { VaultAprResult } from "@/lib/models";
 
 export async function GET() {
   try {
@@ -10,6 +11,18 @@ export async function GET() {
         { status: 404 },
       );
     }
+
+    // Enrich each vault with 24h smoothed APR
+    for (const [address, raw] of Object.entries(data)) {
+      const vault = raw as VaultAprResult;
+      const smoothed = await getSmoothedApr(address);
+      if (smoothed && smoothed.samples > 1) {
+        vault.smoothed_apr = smoothed.apr;
+        vault.smoothed_apy = smoothed.apy;
+        vault.smoothed_samples = smoothed.samples;
+      }
+    }
+
     return NextResponse.json(data, {
       headers: { "Cache-Control": "s-maxage=900, stale-while-revalidate=60" },
     });

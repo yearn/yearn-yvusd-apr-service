@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { isAddress } from "viem";
-import { readVaultAprs } from "@/lib/redis";
+import { readVaultAprs, getSmoothedApr } from "@/lib/redis";
 
 export async function GET(
   _request: NextRequest,
@@ -24,6 +24,13 @@ export async function GET(
         { error: `Vault ${address} not found. Run sync first or check the address.` },
         { status: 404 },
       );
+    }
+
+    const smoothed = await getSmoothedApr(address);
+    if (smoothed && smoothed.samples > 1) {
+      result.smoothed_apr = smoothed.apr;
+      result.smoothed_apy = smoothed.apy;
+      result.smoothed_samples = smoothed.samples;
     }
 
     return NextResponse.json(result, {

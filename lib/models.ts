@@ -16,6 +16,9 @@ export interface VaultAprResult {
   components: AprComponent[];
   meta?: Record<string, unknown>;
   computed_at?: string;
+  smoothed_apr?: number;
+  smoothed_apy?: number;
+  smoothed_samples?: number;
 }
 
 export interface AprResultEnvelope {
