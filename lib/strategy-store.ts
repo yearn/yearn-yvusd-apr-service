@@ -97,6 +97,13 @@ function buildHardcodedOffchainConfig(
       }
       return cfg;
     }
+    if (mode === "oracle-growth") {
+      const cfg: Record<string, unknown> = { type: "oracle-growth" };
+      for (const key of ["oracle", "window_seconds", "fallback_apr", "fallback_apr_raw"]) {
+        if (key in v) cfg[key] = v[key];
+      }
+      return cfg;
+    }
     return {};
   }
   return { type: "static", apr: value };

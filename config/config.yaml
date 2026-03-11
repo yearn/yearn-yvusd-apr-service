@@ -53,15 +53,6 @@ apr:
         type: historical
       '0xC58D044404d8B14e953C115E67823784dEA53d8F':
         type: historical
-      '0xBc65ad17c5C0a2A4D159fa5a503f4992c7B545FE':
-        type: offchain
-        apr: 0.04
-      '0x7130570BCEfCedBe9d15B5b11A33006156460f8f':
-        type: offchain
-        apr: 0.04
-      '0xa3931d71877C0E7a3148CB7Eb4463524FEc27fbD':
-        type: offchain
-        apr: 0.04
       # syrupUSDC on Arbitrum — collateral for syrupUSDC/USDC morpho looper
       # Uses Morpho oracle price growth to estimate yield (not ERC4626)
       '0x41CA7586cC1311807B4605fBB748a3B8862b42b5':
