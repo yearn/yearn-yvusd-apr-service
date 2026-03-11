@@ -347,6 +347,7 @@ export async function classifyAddress(
                 meta.remote_vault_name = remoteVaultName ?? rv;
                 const remoteMeta = await classifyAddress(rv, rcid, false);
                 meta.remote_vault_type = remoteMeta.type ?? "default";
+                meta.remote_meta = remoteMeta;
               }
             } catch {
               // remote read failed
