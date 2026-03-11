@@ -156,6 +156,85 @@ export default async function Home() {
         </pre>
       </section>
 
+      <section className="mb-10">
+        <h2 className="text-xl font-semibold mb-4">Webhook Outputs</h2>
+        <p className="text-zinc-400 text-sm mb-4">
+          When Kong triggers the webhook, the service returns timeseries outputs
+          at both vault and strategy level.
+        </p>
+
+        <h3 className="text-base font-medium mb-3 text-zinc-300">Vault-level</h3>
+        <p className="text-zinc-500 text-sm mb-2">
+          Emitted per vault with the vault address.
+        </p>
+        <div className="overflow-x-auto mb-6">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-zinc-800 text-left text-zinc-400">
+                <th className="pb-2 pr-4 font-medium">Component</th>
+                <th className="pb-2 font-medium">Description</th>
+              </tr>
+            </thead>
+            <tbody className="text-zinc-300">
+              <tr className="border-b border-zinc-900">
+                <td className="py-2 pr-4"><code className="text-xs">netAPR</code></td>
+                <td className="py-2 text-zinc-500">Net APR (base + locker bonus if applicable)</td>
+              </tr>
+              <tr className="border-b border-zinc-900">
+                <td className="py-2 pr-4"><code className="text-xs">netAPY</code></td>
+                <td className="py-2 text-zinc-500">Net APY (compounded)</td>
+              </tr>
+              <tr className="border-b border-zinc-900">
+                <td className="py-2 pr-4"><code className="text-xs">grossAPR</code></td>
+                <td className="py-2 text-zinc-500">Gross APR before fees</td>
+              </tr>
+              <tr className="border-b border-zinc-900">
+                <td className="py-2 pr-4"><code className="text-xs">baseNetAPR</code></td>
+                <td className="py-2 text-zinc-500">Base net APR (without locker bonus)</td>
+              </tr>
+              <tr className="border-b border-zinc-900">
+                <td className="py-2 pr-4"><code className="text-xs">baseNetAPY</code></td>
+                <td className="py-2 text-zinc-500">Base net APY</td>
+              </tr>
+              <tr className="border-b border-zinc-900">
+                <td className="py-2 pr-4"><code className="text-xs">lockerBonusAPR</code></td>
+                <td className="py-2 text-zinc-500">Locker bonus APR (LockedYvUSD only)</td>
+              </tr>
+              <tr className="border-b border-zinc-900">
+                <td className="py-2 pr-4"><code className="text-xs">lockerBonusAPY</code></td>
+                <td className="py-2 text-zinc-500">Locker bonus APY (LockedYvUSD only)</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3 className="text-base font-medium mb-3 text-zinc-300">Strategy-level</h3>
+        <p className="text-zinc-500 text-sm mb-2">
+          Emitted per strategy with the strategy address. Enables Kong to store
+          per-strategy APR data for composition breakdowns.
+        </p>
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-zinc-800 text-left text-zinc-400">
+                <th className="pb-2 pr-4 font-medium">Component</th>
+                <th className="pb-2 font-medium">Description</th>
+              </tr>
+            </thead>
+            <tbody className="text-zinc-300">
+              <tr className="border-b border-zinc-900">
+                <td className="py-2 pr-4"><code className="text-xs">netAPR</code></td>
+                <td className="py-2 text-zinc-500">Strategy{"'"}s individual net APR</td>
+              </tr>
+              <tr className="border-b border-zinc-900">
+                <td className="py-2 pr-4"><code className="text-xs">debtRatio</code></td>
+                <td className="py-2 text-zinc-500">Strategy{"'"}s weight relative to total vault assets</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
       <footer className="pt-8 border-t border-zinc-900">
         <a
           href="https://github.com/yearn/yearn-yvusd-apr-service"
