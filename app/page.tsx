@@ -15,7 +15,9 @@ export default async function Home() {
 
   const host = process.env.VERCEL_PROJECT_PRODUCTION_URL
     ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}`
-    : "http://localhost:3000";
+    : process.env.VERCEL_URL
+      ? `https://${process.env.VERCEL_URL}`
+      : "http://localhost:3000";
 
   return (
     <main className="max-w-3xl mx-auto px-6 py-16">
