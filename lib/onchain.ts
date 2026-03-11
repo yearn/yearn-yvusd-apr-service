@@ -865,7 +865,18 @@ export async function getMorphoMarketBorrowApy(
       ],
     });
 
-    return ratePerSecondToApyRaw(borrowRatePerSecond);
+    const currentApy = ratePerSecondToApyRaw(borrowRatePerSecond);
+
+    // Record and smooth borrow rate over 24h rolling window
+    try {
+      const { recordBorrowRate, getAverageBorrowRate } = await import("./redis");
+      await recordBorrowRate(morpho, marketId, chainId, currentApy);
+      const avgApy = await getAverageBorrowRate(morpho, marketId, chainId, 24 * 60 * 60);
+      return avgApy ?? currentApy;
+    } catch {
+      // Redis unavailable — fall back to instant reading
+      return currentApy;
+    }
   } catch {
     return null;
   }

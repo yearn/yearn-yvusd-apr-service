@@ -51,3 +51,35 @@ export async function readVaultAprs(addresses: string[]): Promise<(VaultAprResul
   const values = await getClient().mget(...keys);
   return values.map((raw) => (raw ? (JSON.parse(raw) as VaultAprResult) : null));
 }
+
+/* ── Borrow Rate Smoothing (per-market 24h rolling average) ── */
+
+export async function recordBorrowRate(
+  morpho: string,
+  marketId: string,
+  chainId: number,
+  rate: bigint,
+): Promise<void> {
+  const key = `yvusd:borrow_rate:${chainId}:${morpho.toLowerCase()}:${marketId.toLowerCase()}`;
+  const now = Math.floor(Date.now() / 1000);
+  const member = JSON.stringify({ timestamp: now, rate: rate.toString() });
+  const pipeline = getClient().pipeline();
+  pipeline.zadd(key, now, member);
+  pipeline.zremrangebyscore(key, "-inf", now - 25 * 60 * 60);
+  await pipeline.exec();
+}
+
+export async function getAverageBorrowRate(
+  morpho: string,
+  marketId: string,
+  chainId: number,
+  windowSeconds = 24 * 60 * 60,
+): Promise<bigint | null> {
+  const key = `yvusd:borrow_rate:${chainId}:${morpho.toLowerCase()}:${marketId.toLowerCase()}`;
+  const cutoff = Math.floor(Date.now() / 1000) - windowSeconds;
+  const members = await getClient().zrangebyscore(key, cutoff, "+inf");
+  if (!members.length) return null;
+  let sum = 0n;
+  for (const m of members) sum += BigInt(JSON.parse(m).rate);
+  return sum / BigInt(members.length);
+}
