@@ -1,4 +1,4 @@
-import { readVaultAprs } from "@/lib/redis";
+import { readVaultAprs, getSmoothedApr, enrichComponentsWithSmoothed } from "@/lib/redis";
 import {
   findComponent,
   jsonResponseWithBigInt,
@@ -49,6 +49,12 @@ export async function POST(request: NextRequest) {
 
     for (const vault of aprResults) {
       if (!vault) continue;
+      const smoothed = await getSmoothedApr(vault.address);
+      if (smoothed && smoothed.samples > 1) {
+        vault.apr = smoothed.apr;
+        vault.apy = smoothed.apy;
+      }
+      await enrichComponentsWithSmoothed(vault.address, vault.components);
       const base = { chainId: vault.chain_id, address: vault.address, label, blockNumber, blockTime };
 
       const netAPR = findComponent(vault.components, "net_apr");
