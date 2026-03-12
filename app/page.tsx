@@ -1,5 +1,5 @@
 import { headers } from "next/headers";
-import { readAprResult } from "@/lib/redis";
+import { readAprResult, getSmoothedApr, enrichComponentsWithSmoothed } from "@/lib/redis";
 import type { VaultAprResult } from "@/lib/models";
 import { CopyButton } from "./copy-button";
 
@@ -10,6 +10,15 @@ export default async function Home() {
   try {
     const data = await readAprResult();
     if (data) {
+      for (const [address, raw] of Object.entries(data)) {
+        const vault = raw as VaultAprResult;
+        const smoothed = await getSmoothedApr(address);
+        if (smoothed && smoothed.samples > 1) {
+          vault.apr = smoothed.apr;
+          vault.apy = smoothed.apy;
+        }
+        await enrichComponentsWithSmoothed(address, vault.components);
+      }
       vaults = Object.values(data) as VaultAprResult[];
     }
   } catch {}
