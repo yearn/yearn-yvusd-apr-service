@@ -1,4 +1,5 @@
 import type { StrategyCacheConfig } from "./config";
+import { getAddress } from "viem";
 import {
   ONE,
   getVaultTotalSupply,
@@ -193,7 +194,7 @@ export class YvUsdAprEngine {
         }
 
         strategyMeta.push({
-          address: entry.address,
+          address: getAddress(entry.address),
           apr_source: entry.apr_source,
           offchain: entry.offchain,
           meta: pruneStrategyMeta(entry.meta),

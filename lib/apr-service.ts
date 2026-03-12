@@ -1,5 +1,6 @@
 import type { AprConfig } from "./config";
 import type { VaultAprResult } from "./models";
+import { getAddress } from "viem";
 import {
   initOnchainClients,
   getErc4626Asset,
@@ -42,7 +43,7 @@ export async function computeAllVaultsApr(
     const payload: VaultAprResult = {
       name: vault.name,
       symbol: vault.symbol,
-      address: vault.address,
+      address: getAddress(vault.address),
       chain_id: vault.chain_id,
       apr: totalApr,
       apy: aprToApy(totalApr, periodsPerYear),
@@ -82,7 +83,7 @@ export async function computeAllVaultsApr(
     }
 
     payload.computed_at = computedAt;
-    results[vault.address] = payload;
+    results[getAddress(vault.address)] = payload;
   }
 
   return results;
