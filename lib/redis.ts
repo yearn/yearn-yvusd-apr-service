@@ -72,9 +72,8 @@ export async function enrichComponentsWithSmoothed(address: string, components: 
   for (const component of components) {
     const smoothed = await getSmoothedApr(`${address}:${component.label}`);
     if (smoothed && smoothed.samples > 1) {
-      component.smoothed_apr = smoothed.apr;
-      component.smoothed_apy = smoothed.apy;
-      component.smoothed_samples = smoothed.samples;
+      component.apr = smoothed.apr;
+      component.apy = smoothed.apy;
     }
   }
 }
