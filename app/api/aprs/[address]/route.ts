@@ -28,9 +28,8 @@ export async function GET(
 
     const smoothed = await getSmoothedApr(address);
     if (smoothed && smoothed.samples > 1) {
-      result.smoothed_apr = smoothed.apr;
-      result.smoothed_apy = smoothed.apy;
-      result.smoothed_samples = smoothed.samples;
+      result.apr = smoothed.apr;
+      result.apy = smoothed.apy;
     }
     await enrichComponentsWithSmoothed(address, result.components);
 
