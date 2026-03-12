@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { readAprResult, getSmoothedApr } from "@/lib/redis";
+import { readAprResult, getSmoothedApr, enrichComponentsWithSmoothed } from "@/lib/redis";
 import type { VaultAprResult } from "@/lib/models";
 
 export async function GET() {
@@ -21,6 +21,7 @@ export async function GET() {
         vault.smoothed_apy = smoothed.apy;
         vault.smoothed_samples = smoothed.samples;
       }
+      await enrichComponentsWithSmoothed(address, vault.components);
     }
 
     return NextResponse.json(data, {

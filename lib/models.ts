@@ -4,6 +4,9 @@ export interface AprComponent {
   apy: number;
   source: string;
   meta?: Record<string, unknown>;
+  smoothed_apr?: number;
+  smoothed_apy?: number;
+  smoothed_samples?: number;
 }
 
 export interface VaultAprResult {

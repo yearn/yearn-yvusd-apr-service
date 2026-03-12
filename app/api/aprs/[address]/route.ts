@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { isAddress } from "viem";
-import { readVaultAprs, getSmoothedApr } from "@/lib/redis";
+import { readVaultAprs, getSmoothedApr, enrichComponentsWithSmoothed } from "@/lib/redis";
 
 export async function GET(
   _request: NextRequest,
@@ -32,6 +32,7 @@ export async function GET(
       result.smoothed_apy = smoothed.apy;
       result.smoothed_samples = smoothed.samples;
     }
+    await enrichComponentsWithSmoothed(address, result.components);
 
     return NextResponse.json(result, {
       headers: { "Cache-Control": "s-maxage=900, stale-while-revalidate=60" },

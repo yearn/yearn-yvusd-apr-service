@@ -1,5 +1,5 @@
 import Redis from "ioredis";
-import type { VaultAprResult } from "./models";
+import type { VaultAprResult, AprComponent } from "./models";
 
 const CACHE_KEY = "yvusd:strategy_cache";
 const APR_RESULT_KEY = "yvusd:apr_result";
@@ -66,6 +66,17 @@ export async function pushAprSnapshot(address: string, apr: number, apy: number)
   // prune entries older than 24h
   pipeline.zremrangebyscore(key, 0, now - HISTORY_WINDOW_MS);
   await pipeline.exec();
+}
+
+export async function enrichComponentsWithSmoothed(address: string, components: AprComponent[]): Promise<void> {
+  for (const component of components) {
+    const smoothed = await getSmoothedApr(`${address}:${component.label}`);
+    if (smoothed && smoothed.samples > 1) {
+      component.smoothed_apr = smoothed.apr;
+      component.smoothed_apy = smoothed.apy;
+      component.smoothed_samples = smoothed.samples;
+    }
+  }
 }
 
 export async function getSmoothedApr(address: string): Promise<{ apr: number; apy: number; samples: number } | null> {

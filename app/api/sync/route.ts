@@ -40,9 +40,12 @@ async function sync(reset: boolean = false) {
   const aprResults = await computeAllVaultsApr(config.apr);
   await writeAprResult(aprResults as unknown as Record<string, unknown>);
 
-  // Push APR snapshots for rolling average
+  // Push APR snapshots for rolling average (vault + per-strategy)
   for (const [address, vault] of Object.entries(aprResults)) {
     await pushAprSnapshot(address, vault.apr, vault.apy);
+    for (const component of vault.components) {
+      await pushAprSnapshot(`${address}:${component.label}`, component.apr, component.apy);
+    }
   }
 
   return { ok: true, vaults: summary, apr: aprResults };
