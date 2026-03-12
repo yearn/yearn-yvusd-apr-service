@@ -1,5 +1,5 @@
 import Redis from "ioredis";
-import type { VaultAprResult } from "./models";
+import type { VaultAprResult, AprComponent } from "./models";
 
 const CACHE_KEY = "yvusd:strategy_cache";
 const APR_RESULT_KEY = "yvusd:apr_result";
@@ -50,4 +50,52 @@ export async function readVaultAprs(addresses: string[]): Promise<(VaultAprResul
   const keys = addresses.map((a) => `${VAULT_APR_PREFIX}${a.toLowerCase()}`);
   const values = await getClient().mget(...keys);
   return values.map((raw) => (raw ? (JSON.parse(raw) as VaultAprResult) : null));
+}
+
+/* ── APR History (sorted sets for rolling average) ── */
+
+const APR_HISTORY_PREFIX = "yvusd:apr_history:";
+const HISTORY_WINDOW_MS = 24 * 60 * 60 * 1000; // 24 hours
+
+export async function pushAprSnapshot(address: string, apr: number, apy: number): Promise<void> {
+  const key = `${APR_HISTORY_PREFIX}${address.toLowerCase()}`;
+  const now = Date.now();
+  const value = JSON.stringify({ apr, apy, t: now });
+  const pipeline = getClient().pipeline();
+  pipeline.zadd(key, now, value);
+  // prune entries older than 24h
+  pipeline.zremrangebyscore(key, 0, now - HISTORY_WINDOW_MS);
+  await pipeline.exec();
+}
+
+export async function enrichComponentsWithSmoothed(address: string, components: AprComponent[]): Promise<void> {
+  for (const component of components) {
+    const smoothed = await getSmoothedApr(`${address}:${component.label}`);
+    if (smoothed && smoothed.samples > 1) {
+      component.smoothed_apr = smoothed.apr;
+      component.smoothed_apy = smoothed.apy;
+      component.smoothed_samples = smoothed.samples;
+    }
+  }
+}
+
+export async function getSmoothedApr(address: string): Promise<{ apr: number; apy: number; samples: number } | null> {
+  const key = `${APR_HISTORY_PREFIX}${address.toLowerCase()}`;
+  const now = Date.now();
+  const entries = await getClient().zrangebyscore(key, now - HISTORY_WINDOW_MS, now);
+  if (entries.length === 0) return null;
+
+  let aprSum = 0;
+  let apySum = 0;
+  for (const raw of entries) {
+    const entry = JSON.parse(raw) as { apr: number; apy: number; t: number };
+    aprSum += entry.apr;
+    apySum += entry.apy;
+  }
+
+  return {
+    apr: aprSum / entries.length,
+    apy: apySum / entries.length,
+    samples: entries.length,
+  };
 }
