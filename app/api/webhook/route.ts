@@ -1,4 +1,10 @@
-import { readVaultAprs, getSmoothedApr, enrichComponentsWithSmoothed } from "@/lib/redis";
+import { aprToApy } from "@/lib/apy";
+import { getVaultProfitMaxUnlockTime, ONE } from "@/lib/onchain";
+import {
+  enrichComponentsWithSmoothed,
+  getSmoothedApr,
+  readVaultAprs,
+} from "@/lib/redis";
 import {
   findComponent,
   jsonResponseWithBigInt,
@@ -6,12 +12,10 @@ import {
   parseWebhookBody,
   verifyWebhookSignature,
 } from "@/lib/webhook-utils";
-import { ONE } from "@/lib/onchain";
 import { NextRequest, NextResponse } from "next/server";
 
 const YVUSD_ADDRESS = process.env.YVUSD_ADDRESS ?? "";
 const LOCKED_YVUSD_ADDRESS = process.env.LOCKED_YVUSD_ADDRESS ?? "";
-
 
 export async function OPTIONS() {
   return new Response("", {});
@@ -20,7 +24,10 @@ export async function OPTIONS() {
 export async function POST(request: NextRequest) {
   const secret = process.env.KONG_WEBHOOK_SECRET;
   if (!secret) {
-    return NextResponse.json({ error: "Webhook secret not configured" }, { status: 500 });
+    return NextResponse.json(
+      { error: "Webhook secret not configured" },
+      { status: 500 },
+    );
   }
 
   const signature = request.headers.get("Kong-Signature");
@@ -35,15 +42,21 @@ export async function POST(request: NextRequest) {
   }
 
   try {
-    const { addresses, blockNumber, blockTime, label } = parseWebhookBody(rawBody);
+    const { addresses, blockNumber, blockTime, label } =
+      parseWebhookBody(rawBody);
     const yvusd = YVUSD_ADDRESS.toLowerCase();
     const locked = LOCKED_YVUSD_ADDRESS.toLowerCase();
 
-    const filteredAddresses = addresses.filter((a) => a.toLowerCase() === yvusd || a.toLowerCase() === locked);
+    const filteredAddresses = addresses.filter(
+      (a) => a.toLowerCase() === yvusd || a.toLowerCase() === locked,
+    );
     if (filteredAddresses.length === 0) {
-      return NextResponse.json({ error: "No supported addresses provided" }, { status: 400 });
+      return NextResponse.json(
+        { error: "No supported addresses provided" },
+        { status: 400 },
+      );
     }
-    
+
     const aprResults = await readVaultAprs(filteredAddresses);
     const outputs: KongOutput[] = [];
 
@@ -55,35 +68,69 @@ export async function POST(request: NextRequest) {
         vault.apy = smoothed.apy;
       }
       await enrichComponentsWithSmoothed(vault.address, vault.components);
-      const base = { chainId: vault.chain_id, address: vault.address, label, blockNumber, blockTime };
+      const base = {
+        chainId: vault.chain_id,
+        address: vault.address,
+        label,
+        blockNumber,
+        blockTime,
+      };
 
       const netAPR = findComponent(vault.components, "net_apr");
       const baseNetAPR = findComponent(vault.components, "base_net_apr");
-      const lockerBonusAPR = findComponent(vault.components, "locker_bonus_apr");
+      const lockerBonusAPR = findComponent(
+        vault.components,
+        "locker_bonus_apr",
+      );
       const aprSource = netAPR ?? baseNetAPR;
       if (!aprSource && !lockerBonusAPR) continue;
 
-      const netValue = netAPR?.apr ?? ((baseNetAPR?.apr ?? 0) + (lockerBonusAPR?.apr ?? 0));
-      const netApyValue = netAPR?.apy ?? ((baseNetAPR?.apy ?? 0) + (lockerBonusAPR?.apy ?? 0));
+      const netValue =
+        netAPR?.apr ?? (baseNetAPR?.apr ?? 0) + (lockerBonusAPR?.apr ?? 0);
+      const netApyValue =
+        netAPR?.apy ?? (baseNetAPR?.apy ?? 0) + (lockerBonusAPR?.apy ?? 0);
       outputs.push({ ...base, component: "netAPR", value: netValue });
       outputs.push({ ...base, component: "netAPY", value: netApyValue });
 
       if (aprSource) {
         const grossRaw = aprSource.meta?.gross_apr_raw as string | undefined;
-        if (grossRaw) outputs.push({ ...base, component: "grossAPR", value: Number(BigInt(grossRaw)) / 1e18 });
+        if (grossRaw)
+          outputs.push({
+            ...base,
+            component: "grossAPR",
+            value: Number(BigInt(grossRaw)) / 1e18,
+          });
       }
-      
+
       if (baseNetAPR) {
-        outputs.push({ ...base, component: "baseNetAPR", value: baseNetAPR.apr });
-        outputs.push({ ...base, component: "baseNetAPY", value: baseNetAPR.apy });
+        outputs.push({
+          ...base,
+          component: "baseNetAPR",
+          value: baseNetAPR.apr,
+        });
+        outputs.push({
+          ...base,
+          component: "baseNetAPY",
+          value: baseNetAPR.apy,
+        });
       }
       if (lockerBonusAPR) {
-        outputs.push({ ...base, component: "lockerBonusAPR", value: lockerBonusAPR.apr });
-        outputs.push({ ...base, component: "lockerBonusAPY", value: lockerBonusAPR.apy });
+        outputs.push({
+          ...base,
+          component: "lockerBonusAPR",
+          value: lockerBonusAPR.apr,
+        });
+        outputs.push({
+          ...base,
+          component: "lockerBonusAPY",
+          value: lockerBonusAPR.apy,
+        });
       }
 
       // Per-strategy outputs (similar to v2-estimated-apr-hook)
-      const strategies = vault.meta?.strategies as Array<Record<string, unknown>> | undefined;
+      const strategies = vault.meta?.strategies as
+        | Array<Record<string, unknown>>
+        | undefined;
       if (strategies) {
         for (const strategy of strategies) {
           const stratAddress = strategy.address as string;
@@ -94,7 +141,14 @@ export async function POST(request: NextRequest) {
           const netApr = Number(netAprRaw) / Number(ONE);
           const weight = Number(strategy.weight ?? 0);
 
+          const unlockTime = await getVaultProfitMaxUnlockTime(
+            vault.address,
+            vault.chain_id,
+          );
+          const netAPY = aprToApy(netApr, Number(unlockTime));
+
           outputs.push({ ...stratBase, component: "netAPR", value: netApr });
+          outputs.push({ ...stratBase, component: "netAPY", value: netAPY });
           outputs.push({ ...stratBase, component: "debtRatio", value: weight });
         }
       }
