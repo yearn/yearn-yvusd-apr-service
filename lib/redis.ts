@@ -55,7 +55,7 @@ export async function readVaultAprs(addresses: string[]): Promise<(VaultAprResul
 /* ── APR History (sorted sets for rolling average) ── */
 
 const APR_HISTORY_PREFIX = "yvusd:apr_history:";
-const HISTORY_WINDOW_MS = 24 * 60 * 60 * 1000; // 24 hours
+const HISTORY_WINDOW_MS = 12 * 60 * 60 * 1000; // 12 hours
 
 export async function pushAprSnapshot(address: string, apr: number, apy: number): Promise<void> {
   const key = `${APR_HISTORY_PREFIX}${address.toLowerCase()}`;
