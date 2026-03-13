@@ -1,4 +1,4 @@
-import { aprToApy } from "@/lib/apy";
+import { aprToApy, unlockTimeToPeriodsPerYear } from "@/lib/apy";
 import { getVaultProfitMaxUnlockTime, ONE } from "@/lib/onchain";
 import {
   enrichComponentsWithSmoothed,
@@ -145,7 +145,10 @@ export async function POST(request: NextRequest) {
             vault.address,
             vault.chain_id,
           );
-          const netAPY = aprToApy(netApr, Number(unlockTime));
+          const netAPY = aprToApy(
+            netApr,
+            unlockTimeToPeriodsPerYear(Number(unlockTime)),
+          );
 
           outputs.push({ ...stratBase, component: "netAPR", value: netApr });
           outputs.push({ ...stratBase, component: "netAPY", value: netAPY });
