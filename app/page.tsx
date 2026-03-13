@@ -5,21 +5,78 @@ import { CopyButton } from "./copy-button";
 
 export const dynamic = "force-dynamic";
 
-export default async function Home() {
+const KONG_VAULTS = [
+  { address: "0x696d02Db93291651ED510704c9b286841d506987", name: "yvUSD", symbol: "yvUSD" },
+  { address: "0xAaaFEa48472f77563961Cdb53291DEDfB46F9040", name: "LockedYvUSD", symbol: "LockedYvUSD" },
+];
+
+async function fetchKongVaults(): Promise<VaultAprResult[]> {
+  const results: VaultAprResult[] = [];
+  for (const v of KONG_VAULTS) {
+    const res = await fetch(`https://kong.yearn.fi/api/rest/snapshot/1/${v.address}`, { cache: "no-store" });
+    if (!res.ok) continue;
+    const data = await res.json();
+    const estimated = data.performance?.estimated;
+    if (!estimated) continue;
+
+    const isLocked = v.symbol === "LockedYvUSD";
+    const components = isLocked
+      ? [
+          { label: "base_net_apr", apr: estimated.components?.baseNetAPR ?? 0, apy: estimated.components?.baseNetAPY ?? 0, source: "kong" },
+          { label: "locker_bonus_apr", apr: estimated.components?.lockerBonusAPR ?? 0, apy: estimated.components?.lockerBonusAPY ?? 0, source: "kong" },
+        ]
+      : [
+          { label: "net_apr", apr: estimated.apr ?? 0, apy: estimated.apy ?? 0, source: "kong" },
+        ];
+
+    results.push({
+      name: v.name,
+      symbol: v.symbol,
+      address: v.address,
+      chain_id: data.chainId ?? 1,
+      apr: estimated.apr ?? 0,
+      apy: estimated.apy ?? 0,
+      components,
+    });
+  }
+  return results;
+}
+
+async function fetchSmoothedVaults(): Promise<VaultAprResult[]> {
+  const data = await readAprResult();
+  if (!data) return [];
+  for (const [address, raw] of Object.entries(data)) {
+    const vault = raw as VaultAprResult;
+    const smoothed = await getSmoothedApr(address);
+    if (smoothed && smoothed.samples > 1) {
+      vault.apr = smoothed.apr;
+      vault.apy = smoothed.apy;
+    }
+    await enrichComponentsWithSmoothed(address, vault.components);
+  }
+  return Object.values(data) as VaultAprResult[];
+}
+
+async function fetchRawVaults(): Promise<VaultAprResult[]> {
+  const data = await readAprResult();
+  if (!data) return [];
+  return Object.values(data) as VaultAprResult[];
+}
+
+type Format = "kong" | "smooth" | "raw";
+
+export default async function Home({ searchParams }: { searchParams: Promise<{ format?: string }> }) {
+  const params = await searchParams;
+  const format = (["kong", "smooth", "raw"].includes(params.format ?? "") ? params.format : "kong") as Format;
+
   let vaults: VaultAprResult[] = [];
   try {
-    const data = await readAprResult();
-    if (data) {
-      for (const [address, raw] of Object.entries(data)) {
-        const vault = raw as VaultAprResult;
-        const smoothed = await getSmoothedApr(address);
-        if (smoothed && smoothed.samples > 1) {
-          vault.apr = smoothed.apr;
-          vault.apy = smoothed.apy;
-        }
-        await enrichComponentsWithSmoothed(address, vault.components);
-      }
-      vaults = Object.values(data) as VaultAprResult[];
+    if (format === "kong") {
+      vaults = await fetchKongVaults();
+    } else if (format === "smooth") {
+      vaults = await fetchSmoothedVaults();
+    } else {
+      vaults = await fetchRawVaults();
     }
   } catch {}
 
