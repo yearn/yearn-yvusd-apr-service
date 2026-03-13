@@ -26,6 +26,8 @@ export async function GET(
       );
     }
 
+    result.apr_raw = result.apr;
+    result.apy_raw = result.apy;
     const smoothed = await getSmoothedApr(address);
     if (smoothed && smoothed.samples > 1) {
       result.apr = smoothed.apr;

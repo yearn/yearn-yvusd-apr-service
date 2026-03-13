@@ -70,6 +70,8 @@ export async function pushAprSnapshot(address: string, apr: number, apy: number)
 
 export async function enrichComponentsWithSmoothed(address: string, components: AprComponent[]): Promise<void> {
   for (const component of components) {
+    component.apr_raw = component.apr;
+    component.apy_raw = component.apy;
     const smoothed = await getSmoothedApr(`${address}:${component.label}`);
     if (smoothed && smoothed.samples > 1) {
       component.apr = smoothed.apr;

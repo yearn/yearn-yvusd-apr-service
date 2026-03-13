@@ -15,6 +15,8 @@ export async function GET() {
     // Overwrite instant APR/APY with 24h smoothed values when available
     for (const [address, raw] of Object.entries(data)) {
       const vault = raw as VaultAprResult;
+      vault.apr_raw = vault.apr;
+      vault.apy_raw = vault.apy;
       const smoothed = await getSmoothedApr(address);
       if (smoothed && smoothed.samples > 1) {
         vault.apr = smoothed.apr;
