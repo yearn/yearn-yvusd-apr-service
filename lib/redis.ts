@@ -55,16 +55,27 @@ export async function readVaultAprs(addresses: string[]): Promise<(VaultAprResul
 /* ── APR History (sorted sets for rolling average) ── */
 
 const APR_HISTORY_PREFIX = "yvusd:apr_history:";
-const HISTORY_WINDOW_MS = 12 * 60 * 60 * 1000; // 12 hours
+const DEFAULT_WINDOW_MS = 24 * 60 * 60 * 1000; // 24 hours
+
+const LOCKED_YVUSD = "0xaaafea48472f77563961cdb53291dedfb46f9040";
+
+/** Per-vault smoothing windows. Unlisted vaults use DEFAULT_WINDOW_MS. */
+const SMOOTHING_WINDOWS: Record<string, number> = {
+  [LOCKED_YVUSD]: 4 * 60 * 60 * 1000, // 4 hours
+};
+
+function getWindowMs(address: string): number {
+  return SMOOTHING_WINDOWS[address.toLowerCase()] ?? DEFAULT_WINDOW_MS;
+}
 
 export async function pushAprSnapshot(address: string, apr: number, apy: number): Promise<void> {
   const key = `${APR_HISTORY_PREFIX}${address.toLowerCase()}`;
   const now = Date.now();
+  const windowMs = getWindowMs(address);
   const value = JSON.stringify({ apr, apy, t: now });
   const pipeline = getClient().pipeline();
   pipeline.zadd(key, now, value);
-  // prune entries older than 24h
-  pipeline.zremrangebyscore(key, 0, now - HISTORY_WINDOW_MS);
+  pipeline.zremrangebyscore(key, 0, now - windowMs);
   await pipeline.exec();
 }
 
@@ -81,7 +92,8 @@ export async function enrichComponentsWithSmoothed(address: string, components: 
 export async function getSmoothedApr(address: string): Promise<{ apr: number; apy: number; samples: number } | null> {
   const key = `${APR_HISTORY_PREFIX}${address.toLowerCase()}`;
   const now = Date.now();
-  const entries = await getClient().zrangebyscore(key, now - HISTORY_WINDOW_MS, now);
+  const windowMs = getWindowMs(address);
+  const entries = await getClient().zrangebyscore(key, now - windowMs, now);
   if (entries.length === 0) return null;
 
   let aprSum = 0;
