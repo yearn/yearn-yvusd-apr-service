@@ -359,12 +359,20 @@ export async function classifyAddress(
     }
   }
 
-  const leverageRatio = await probeUint(
+  let leverageRatio = await probeUint(
     addr,
     chainId,
-    targetLeverageAbi,
-    "targetLeverageRatio",
+    currentLeverageRatioAbi,
+    "getCurrentLeverageRatio",
   );
+  if (leverageRatio === null) {
+    leverageRatio = await probeUint(
+      addr,
+      chainId,
+      targetLeverageAbi,
+      "targetLeverageRatio",
+    );
+  }
   if (leverageRatio !== null) {
     const marketId = await probeBytes32(addr, chainId, marketIdAbi, "marketId");
     const hasMorphoMarketId = isValidNonZeroBytes32(marketId);
@@ -654,14 +662,12 @@ export async function getStrategyMorpho(strategy: string, chainId: number): Prom
 }
 
 export async function getStrategyLeverageRatio(strategy: string, chainId: number): Promise<bigint | null> {
-  const current = await probeUint(
+  return probeUint(
     getAddress(strategy),
     chainId,
     currentLeverageRatioAbi,
     "getCurrentLeverageRatio",
   );
-  if (current !== null) return current;
-  return probeUint(getAddress(strategy), chainId, targetLeverageAbi, "targetLeverageRatio");
 }
 
 export async function getStrategyPendleMarket(

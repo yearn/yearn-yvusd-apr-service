@@ -55,7 +55,7 @@ export async function readVaultAprs(addresses: string[]): Promise<(VaultAprResul
 /* ── APR History (sorted sets for rolling average) ── */
 
 const APR_HISTORY_PREFIX = "yvusd:apr_history:";
-const DEFAULT_WINDOW_MS = 24 * 60 * 60 * 1000; // 24 hours
+const DEFAULT_WINDOW_MS = 48 * 60 * 60 * 1000; // 48 hours
 
 const LOCKED_YVUSD = "0xaaafea48472f77563961cdb53291dedfb46f9040";
 
