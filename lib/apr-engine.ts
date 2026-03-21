@@ -235,13 +235,13 @@ export class YvUsdAprEngine {
     const cached = this._lockedCache.get(key);
     if (cached !== undefined) return cached;
 
-    const [baseApr, , feeConfig] = await this.getCustomExpectedApr(
+    const [, netApr, feeConfig] = await this.getCustomExpectedApr(
       vaultAddress,
       lockedVaultAddress,
       chainId,
       0,
     );
-    if (!baseApr) {
+    if (!netApr) {
       this._lockedCache.set(key, 0n);
       return 0n;
     }
@@ -271,7 +271,7 @@ export class YvUsdAprEngine {
       return 0n;
     }
 
-    let bonusApr = (baseApr * BigInt(lockerBonusBps)) / BigInt(MAX_BPS);
+    let bonusApr = (netApr * BigInt(lockerBonusBps)) / BigInt(MAX_BPS);
     bonusApr = (bonusApr * ONE) / lockedRatio;
 
     this._lockedCache.set(key, bonusApr);

@@ -55,7 +55,7 @@ export async function readVaultAprs(addresses: string[]): Promise<(VaultAprResul
 /* ── APR History (sorted sets for rolling average) ── */
 
 const APR_HISTORY_PREFIX = "yvusd:apr_history:";
-const DEFAULT_WINDOW_MS = 48 * 60 * 60 * 1000; // 48 hours
+const DEFAULT_WINDOW_MS = 48 * 60 * 60 * 1000; // 48h — ramped up from 24h, target is 336h (14d)
 
 const LOCKED_YVUSD = "0xaaafea48472f77563961cdb53291dedfb46f9040";
 
@@ -64,8 +64,15 @@ const SMOOTHING_WINDOWS: Record<string, number> = {
   [LOCKED_YVUSD]: 4 * 60 * 60 * 1000, // 4 hours
 };
 
-function getWindowMs(address: string): number {
-  return SMOOTHING_WINDOWS[address.toLowerCase()] ?? DEFAULT_WINDOW_MS;
+function getWindowMs(key: string): number {
+  const lower = key.toLowerCase();
+  // Exact match first (vault address)
+  if (SMOOTHING_WINDOWS[lower] !== undefined) return SMOOTHING_WINDOWS[lower];
+  // Component keys are "address:label" — match the address prefix
+  for (const [addr, windowMs] of Object.entries(SMOOTHING_WINDOWS)) {
+    if (lower.startsWith(addr + ":")) return windowMs;
+  }
+  return DEFAULT_WINDOW_MS;
 }
 
 export async function pushAprSnapshot(address: string, apr: number, apy: number): Promise<void> {
@@ -83,8 +90,8 @@ export async function enrichComponentsWithSmoothed(address: string, components: 
   for (const component of components) {
     const smoothed = await getSmoothedApr(`${address}:${component.label}`);
     if (smoothed && smoothed.samples > 1) {
-      component.apr = smoothed.apr;
-      component.apy = smoothed.apy;
+      (component as unknown as Record<string, unknown>).smoothed_apr = smoothed.apr;
+      (component as unknown as Record<string, unknown>).smoothed_apy = smoothed.apy;
     }
   }
 }

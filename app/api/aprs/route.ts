@@ -12,13 +12,13 @@ export async function GET() {
       );
     }
 
-    // Overwrite instant APR/APY with 24h smoothed values when available
+    // Add smoothed APR/APY as separate fields, keeping instant values intact
     for (const [address, raw] of Object.entries(data)) {
       const vault = raw as VaultAprResult;
       const smoothed = await getSmoothedApr(address);
       if (smoothed && smoothed.samples > 1) {
-        vault.apr = smoothed.apr;
-        vault.apy = smoothed.apy;
+        (vault as unknown as Record<string, unknown>).smoothed_apr = smoothed.apr;
+        (vault as unknown as Record<string, unknown>).smoothed_apy = smoothed.apy;
       }
       await enrichComponentsWithSmoothed(address, vault.components);
     }
