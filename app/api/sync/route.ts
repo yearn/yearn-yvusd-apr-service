@@ -3,7 +3,7 @@ import { loadServiceConfig } from "@/lib/config";
 import { initOnchainClients } from "@/lib/onchain";
 import { syncAll } from "@/lib/strategy-store";
 import { computeAllVaultsApr } from "@/lib/apr-service";
-import { writeAprResult, clearCache, pushAprSnapshot } from "@/lib/redis";
+import { writeAprResult, clearCache } from "@/lib/redis";
 
 export const maxDuration = 120;
 
@@ -39,14 +39,6 @@ async function sync(reset: boolean = false) {
 
   const aprResults = await computeAllVaultsApr(config.apr);
   await writeAprResult(aprResults as unknown as Record<string, unknown>);
-
-  // Push APR snapshots for rolling average (vault + per-strategy)
-  for (const [address, vault] of Object.entries(aprResults)) {
-    await pushAprSnapshot(address, vault.apr, vault.apy);
-    for (const component of vault.components) {
-      await pushAprSnapshot(`${address}:${component.label}`, component.apr, component.apy);
-    }
-  }
 
   return { ok: true, vaults: summary, apr: aprResults };
 }

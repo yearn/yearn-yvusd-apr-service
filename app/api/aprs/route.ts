@@ -1,6 +1,5 @@
 import { NextResponse } from "next/server";
-import { readAprResult, getSmoothedApr, enrichComponentsWithSmoothed } from "@/lib/redis";
-import type { VaultAprResult } from "@/lib/models";
+import { readAprResult } from "@/lib/redis";
 
 export async function GET() {
   try {
@@ -10,17 +9,6 @@ export async function GET() {
         { error: "No APR data available. Run sync first." },
         { status: 404 },
       );
-    }
-
-    // Overwrite instant APR/APY with 24h smoothed values when available
-    for (const [address, raw] of Object.entries(data)) {
-      const vault = raw as VaultAprResult;
-      const smoothed = await getSmoothedApr(address);
-      if (smoothed && smoothed.samples > 1) {
-        vault.apr = smoothed.apr;
-        vault.apy = smoothed.apy;
-      }
-      await enrichComponentsWithSmoothed(address, vault.components);
     }
 
     return NextResponse.json(data, {

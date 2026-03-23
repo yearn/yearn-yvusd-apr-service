@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { isAddress } from "viem";
-import { readVaultAprs, getSmoothedApr, enrichComponentsWithSmoothed } from "@/lib/redis";
+import { readVaultAprs } from "@/lib/redis";
 
 export async function GET(
   _request: NextRequest,
@@ -16,7 +16,6 @@ export async function GET(
   }
 
   try {
-    // readVaultAprs lowercases internally, so case-insensitive lookup works
     const [result] = await readVaultAprs([address]);
 
     if (!result) {
@@ -25,13 +24,6 @@ export async function GET(
         { status: 404 },
       );
     }
-
-    const smoothed = await getSmoothedApr(address);
-    if (smoothed && smoothed.samples > 1) {
-      result.apr = smoothed.apr;
-      result.apy = smoothed.apy;
-    }
-    await enrichComponentsWithSmoothed(address, result.components);
 
     return NextResponse.json(result, {
       headers: { "Cache-Control": "s-maxage=900, stale-while-revalidate=60" },

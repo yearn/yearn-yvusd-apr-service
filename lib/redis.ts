@@ -1,5 +1,5 @@
 import Redis from "ioredis";
-import type { VaultAprResult, AprComponent } from "./models";
+import type { VaultAprResult } from "./models";
 
 const CACHE_KEY = "yvusd:strategy_cache";
 const APR_RESULT_KEY = "yvusd:apr_result";
@@ -50,64 +50,4 @@ export async function readVaultAprs(addresses: string[]): Promise<(VaultAprResul
   const keys = addresses.map((a) => `${VAULT_APR_PREFIX}${a.toLowerCase()}`);
   const values = await getClient().mget(...keys);
   return values.map((raw) => (raw ? (JSON.parse(raw) as VaultAprResult) : null));
-}
-
-/* ── APR History (sorted sets for rolling average) ── */
-
-const APR_HISTORY_PREFIX = "yvusd:apr_history:";
-const DEFAULT_WINDOW_MS = 96 * 60 * 60 * 1000; // 96 hours
-
-const LOCKED_YVUSD = "0xaaafea48472f77563961cdb53291dedfb46f9040";
-
-/** Per-vault smoothing windows. Unlisted vaults use DEFAULT_WINDOW_MS. */
-const SMOOTHING_WINDOWS: Record<string, number> = {
-  [LOCKED_YVUSD]: 4 * 60 * 60 * 1000, // 4 hours
-};
-
-function getWindowMs(address: string): number {
-  const base = address.split(":")[0];
-  return SMOOTHING_WINDOWS[base.toLowerCase()] ?? DEFAULT_WINDOW_MS;
-}
-
-export async function pushAprSnapshot(address: string, apr: number, apy: number): Promise<void> {
-  const key = `${APR_HISTORY_PREFIX}${address.toLowerCase()}`;
-  const now = Date.now();
-  const windowMs = getWindowMs(address);
-  const value = JSON.stringify({ apr, apy, t: now });
-  const pipeline = getClient().pipeline();
-  pipeline.zadd(key, now, value);
-  pipeline.zremrangebyscore(key, 0, now - windowMs);
-  await pipeline.exec();
-}
-
-export async function enrichComponentsWithSmoothed(address: string, components: AprComponent[]): Promise<void> {
-  for (const component of components) {
-    const smoothed = await getSmoothedApr(`${address}:${component.label}`);
-    if (smoothed && smoothed.samples > 1) {
-      component.apr = smoothed.apr;
-      component.apy = smoothed.apy;
-    }
-  }
-}
-
-export async function getSmoothedApr(address: string): Promise<{ apr: number; apy: number; samples: number } | null> {
-  const key = `${APR_HISTORY_PREFIX}${address.toLowerCase()}`;
-  const now = Date.now();
-  const windowMs = getWindowMs(address);
-  const entries = await getClient().zrangebyscore(key, now - windowMs, now);
-  if (entries.length === 0) return null;
-
-  let aprSum = 0;
-  let apySum = 0;
-  for (const raw of entries) {
-    const entry = JSON.parse(raw) as { apr: number; apy: number; t: number };
-    aprSum += entry.apr;
-    apySum += entry.apy;
-  }
-
-  return {
-    apr: aprSum / entries.length,
-    apy: apySum / entries.length,
-    samples: entries.length,
-  };
 }

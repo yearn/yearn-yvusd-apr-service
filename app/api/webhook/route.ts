@@ -1,10 +1,6 @@
 import { aprToApy, unlockTimeToPeriodsPerYear } from "@/lib/apy";
 import { getVaultProfitMaxUnlockTime, ONE } from "@/lib/onchain";
-import {
-  enrichComponentsWithSmoothed,
-  getSmoothedApr,
-  readVaultAprs,
-} from "@/lib/redis";
+import { readVaultAprs } from "@/lib/redis";
 import {
   findComponent,
   jsonResponseWithBigInt,
@@ -14,8 +10,8 @@ import {
 } from "@/lib/webhook-utils";
 import { NextRequest, NextResponse } from "next/server";
 
-const YVUSD_ADDRESS = process.env.YVUSD_ADDRESS ?? "";
-const LOCKED_YVUSD_ADDRESS = process.env.LOCKED_YVUSD_ADDRESS ?? "";
+const YVUSD_ADDRESS = "0x696d02Db93291651ED510704c9b286841d506987";
+const LOCKED_YVUSD_ADDRESS = "0xAaaFEa48472f77563961Cdb53291DEDfB46F9040";
 
 export async function OPTIONS() {
   return new Response("", {});
@@ -44,8 +40,8 @@ export async function POST(request: NextRequest) {
   try {
     const { addresses, blockNumber, blockTime, label } =
       parseWebhookBody(rawBody);
-    const yvusd = YVUSD_ADDRESS.toLowerCase();
-    const locked = LOCKED_YVUSD_ADDRESS.toLowerCase();
+    const yvusd = (process.env.YVUSD_ADDRESS ?? YVUSD_ADDRESS).toLowerCase();
+    const locked = (process.env.LOCKED_YVUSD_ADDRESS ?? LOCKED_YVUSD_ADDRESS).toLowerCase();
 
     const filteredAddresses = addresses.filter(
       (a) => a.toLowerCase() === yvusd || a.toLowerCase() === locked,
@@ -57,17 +53,13 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    const requestedAddresses = new Set(filteredAddresses.map((address) => address.toLowerCase()));
     const aprResults = await readVaultAprs(filteredAddresses);
     const outputs: KongOutput[] = [];
 
     for (const vault of aprResults) {
       if (!vault) continue;
-      const smoothed = await getSmoothedApr(vault.address);
-      if (smoothed && smoothed.samples > 1) {
-        vault.apr = smoothed.apr;
-        vault.apy = smoothed.apy;
-      }
-      await enrichComponentsWithSmoothed(vault.address, vault.components);
+      if (!requestedAddresses.has(vault.address.toLowerCase())) continue;
       const base = {
         chainId: vault.chain_id,
         address: vault.address,
