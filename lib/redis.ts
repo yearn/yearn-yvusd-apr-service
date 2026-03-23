@@ -65,7 +65,8 @@ const SMOOTHING_WINDOWS: Record<string, number> = {
 };
 
 function getWindowMs(address: string): number {
-  return SMOOTHING_WINDOWS[address.toLowerCase()] ?? DEFAULT_WINDOW_MS;
+  const base = address.split(":")[0];
+  return SMOOTHING_WINDOWS[base.toLowerCase()] ?? DEFAULT_WINDOW_MS;
 }
 
 export async function pushAprSnapshot(address: string, apr: number, apy: number): Promise<void> {
