@@ -49,7 +49,14 @@ interface VaultRef {
   symbol?: string;
 }
 
-const MORPHO_LOOPER_TYPES = new Set(["morpho-looper", "pt-morpho-looper"]);
+const LOOPER_TYPES = new Set([
+  "looper",
+  "morpho-looper",
+  "aave-looper",
+  "pt-looper",
+  "pt-morpho-looper",
+  "pt-aave-looper",
+]);
 
 function vaultKey(address: string, chainId: number): string {
   return `${chainId}:${address.toLowerCase()}`;
@@ -103,6 +110,9 @@ function buildHardcodedOffchainConfig(
         if (key in v) cfg[key] = v[key];
       }
       return cfg;
+    }
+    if (mode) {
+      return { ...v, type: mode };
     }
     return {};
   }
@@ -352,7 +362,7 @@ function discoverCollateralVaults(results: CacheData): VaultRef[] {
     for (const item of Object.values(entry.strategies ?? {})) {
       const meta = item.meta ?? {};
       const strategyType = String(meta.type ?? "").toLowerCase().replace(/_/g, "-");
-      if (!MORPHO_LOOPER_TYPES.has(strategyType)) continue;
+      if (!LOOPER_TYPES.has(strategyType)) continue;
 
       const collateral = meta.collateral as
         | { address?: string; name?: string }

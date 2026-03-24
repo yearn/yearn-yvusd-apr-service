@@ -10,6 +10,7 @@ import { mainnet, arbitrum, type Chain } from "viem/chains";
 import type { OnchainSourceConfig, ChainSourceConfig } from "./config";
 
 export const ONE = 10n ** 18n;
+export const RAY = 10n ** 27n;
 export const SECONDS_PER_YEAR = 31_536_000;
 
 const chainDefs: Record<number, Chain> = {
@@ -70,8 +71,20 @@ const targetLeverageAbi = parseAbi([
 ]);
 const morphoAbi = parseAbi(["function morpho() view returns (address)"]);
 const aTokenAbi = parseAbi(["function aToken() view returns (address)"]);
+const aaveReceiptTokenAbi = parseAbi([
+  "function POOL() view returns (address)",
+  "function UNDERLYING_ASSET_ADDRESS() view returns (address)",
+]);
+const aavePoolAbi = parseAbi([
+  "function getReserveNormalizedIncome(address asset) view returns (uint256)",
+  "function getReserveNormalizedVariableDebt(address asset) view returns (uint256)",
+  "function getReserveData(address asset) view returns ((uint256), uint128, uint128, uint128, uint128, uint128, uint40, uint16, address, address, address, address, uint128, uint128, uint128)",
+]);
 const pendleRouterAbi = parseAbi([
   "function pendleRouter() view returns (address)",
+]);
+const pendleRouterStaticAbi = parseAbi([
+  "function getPtToAssetRate(address market) view returns (uint256)",
 ]);
 const routerAbi = parseAbi([
   "function router() view returns (address)",
@@ -112,6 +125,10 @@ const collateralTokenAbi = parseAbi([
 
 const PENDLE_API_BASE_URL = "https://api-v2.pendle.finance/core/v1";
 const PENDLE_API_CACHE_TTL_MS = 60_000;
+const CHAIN_PENDLE_ROUTER_STATIC_ADDRESSES: Record<number, string> = {
+  1: "0x263833d47eA3fA4a30f269323aba6a107f9eB14C",
+  42161: "0xAdB09F65bd90d19e3148D9ccb693F3161C6DB3E8",
+};
 const pendleApiCache = new Map<
   string,
   {
@@ -218,6 +235,48 @@ function isValidNonZeroBytes32(value: string | null): value is `0x${string}` {
   if (!value) return false;
   if (!/^0x[0-9a-fA-F]{64}$/.test(value)) return false;
   return value !== `0x${"0".repeat(64)}`;
+}
+
+function annualizeGrowthRatio(growthRatio: number, elapsedSeconds: number): bigint | null {
+  if (!Number.isFinite(growthRatio) || growthRatio <= 0 || elapsedSeconds <= 0) return null;
+  try {
+    const apy = Math.pow(growthRatio, SECONDS_PER_YEAR / elapsedSeconds) - 1.0;
+    if (!Number.isFinite(apy)) return null;
+    return BigInt(Math.round(apy * Number(ONE)));
+  } catch {
+    return null;
+  }
+}
+
+function annualizeRawGrowth(
+  currentValue: bigint,
+  oldValue: bigint,
+  elapsedSeconds: number,
+): bigint | null {
+  if (currentValue <= 0n || oldValue <= 0n) return null;
+  try {
+    return annualizeGrowthRatio(
+      Number(currentValue) / Number(oldValue),
+      elapsedSeconds,
+    );
+  } catch {
+    return null;
+  }
+}
+
+function rayAnnualRateToApyRaw(rateRay: bigint): bigint {
+  if (rateRay <= 0n) return 0n;
+
+  const linearAprRaw = rateRay / (RAY / ONE);
+  try {
+    const apr = Number(rateRay) / Number(RAY);
+    const apy = Math.expm1(Math.log1p(apr / SECONDS_PER_YEAR) * SECONDS_PER_YEAR);
+    if (!Number.isFinite(apy)) return linearAprRaw > 0n ? linearAprRaw : 0n;
+    const result = BigInt(Math.round(apy * Number(ONE)));
+    return result > 0n ? result : 0n;
+  } catch {
+    return linearAprRaw > 0n ? linearAprRaw : 0n;
+  }
 }
 
 async function probePendleMarket(
@@ -686,6 +745,42 @@ export async function getStrategyPendleRouter(
   return router ?? null;
 }
 
+async function getPendleRouterStatic(chainId: number): Promise<string | null> {
+  const address = CHAIN_PENDLE_ROUTER_STATIC_ADDRESSES[chainId];
+  if (!address) return null;
+  try {
+    return getAddress(address);
+  } catch {
+    return null;
+  }
+}
+
+async function getAaveReserveContext(
+  aToken: string,
+  chainId: number,
+): Promise<{ pool: string; asset: string } | null> {
+  const client = getViemClient(chainId);
+  if (!client) return null;
+
+  try {
+    const [pool, asset] = await Promise.all([
+      client.readContract({
+        address: getAddress(aToken),
+        abi: aaveReceiptTokenAbi,
+        functionName: "POOL",
+      }),
+      client.readContract({
+        address: getAddress(aToken),
+        abi: aaveReceiptTokenAbi,
+        functionName: "UNDERLYING_ASSET_ADDRESS",
+      }),
+    ]);
+    return { pool: getAddress(pool), asset: getAddress(asset) };
+  } catch {
+    return null;
+  }
+}
+
 export async function getPendleMarketApyFromApi(
   chainId: number,
   ptAddress: string,
@@ -823,6 +918,49 @@ export async function getPendleMarketImpliedApy(
   }
 }
 
+async function getPendlePtToAssetRate(
+  market: string,
+  chainId: number,
+  blockNumber?: bigint,
+): Promise<bigint | null> {
+  const client = getViemClient(chainId);
+  if (!client) return null;
+
+  const routerStatic = await getPendleRouterStatic(chainId);
+  if (!routerStatic) return null;
+
+  try {
+    return await client.readContract({
+      address: getAddress(routerStatic),
+      abi: pendleRouterStaticAbi,
+      functionName: "getPtToAssetRate",
+      args: [getAddress(market)],
+      ...(blockNumber !== undefined ? { blockNumber } : {}),
+    });
+  } catch {
+    return null;
+  }
+}
+
+export async function getPendlePtRealizedApy(
+  market: string,
+  chainId: number,
+  windowSeconds: number,
+): Promise<bigint | null> {
+  if (windowSeconds <= 0) return null;
+
+  const bounds = await getHistoricalWindowBounds(chainId, windowSeconds);
+  if (!bounds) return null;
+
+  const [currentRate, oldRate] = await Promise.all([
+    getPendlePtToAssetRate(market, chainId, bounds.latestBlockNumber),
+    getPendlePtToAssetRate(market, chainId, bounds.oldBlockNumber),
+  ]);
+  if (currentRate === null || oldRate === null) return null;
+
+  return annualizeRawGrowth(currentRate, oldRate, bounds.elapsedSeconds);
+}
+
 export async function getMorphoMarketBorrowApy(
   morpho: string,
   marketId: string,
@@ -872,6 +1010,178 @@ export async function getMorphoMarketBorrowApy(
     });
 
     return ratePerSecondToApyRaw(borrowRatePerSecond);
+  } catch {
+    return null;
+  }
+}
+
+async function getMorphoMarketBorrowIndex(
+  morpho: string,
+  marketId: string,
+  chainId: number,
+  blockNumber?: bigint,
+): Promise<bigint | null> {
+  const client = getViemClient(chainId);
+  if (!client) return null;
+
+  try {
+    const market = await client.readContract({
+      address: getAddress(morpho),
+      abi: morphoMarketAbi,
+      functionName: "market",
+      args: [marketId as `0x${string}`],
+      ...(blockNumber !== undefined ? { blockNumber } : {}),
+    });
+
+    const totalBorrowAssets = market[2];
+    const totalBorrowShares = market[3];
+    if (totalBorrowAssets <= 0n || totalBorrowShares <= 0n) return null;
+
+    return (BigInt(totalBorrowAssets) * ONE) / BigInt(totalBorrowShares);
+  } catch {
+    return null;
+  }
+}
+
+export async function getMorphoMarketHistoricalBorrowApy(
+  morpho: string,
+  marketId: string,
+  chainId: number,
+  windowSeconds: number,
+): Promise<bigint | null> {
+  if (windowSeconds <= 0) return null;
+
+  const bounds = await getHistoricalWindowBounds(chainId, windowSeconds);
+  if (!bounds) return null;
+
+  const [currentIndex, oldIndex] = await Promise.all([
+    getMorphoMarketBorrowIndex(morpho, marketId, chainId, bounds.latestBlockNumber),
+    getMorphoMarketBorrowIndex(morpho, marketId, chainId, bounds.oldBlockNumber),
+  ]);
+  if (currentIndex === null || oldIndex === null) return null;
+
+  return annualizeRawGrowth(currentIndex, oldIndex, bounds.elapsedSeconds);
+}
+
+export async function getAaveReserveHistoricalSupplyApy(
+  aToken: string,
+  chainId: number,
+  windowSeconds: number,
+): Promise<bigint | null> {
+  if (windowSeconds <= 0) return null;
+
+  const client = getViemClient(chainId);
+  if (!client) return null;
+
+  const context = await getAaveReserveContext(aToken, chainId);
+  if (!context) return null;
+
+  const bounds = await getHistoricalWindowBounds(chainId, windowSeconds);
+  if (!bounds) return null;
+
+  try {
+    const [currentIndex, oldIndex] = await Promise.all([
+      client.readContract({
+        address: getAddress(context.pool),
+        abi: aavePoolAbi,
+        functionName: "getReserveNormalizedIncome",
+        args: [getAddress(context.asset)],
+        blockNumber: bounds.latestBlockNumber,
+      }),
+      client.readContract({
+        address: getAddress(context.pool),
+        abi: aavePoolAbi,
+        functionName: "getReserveNormalizedIncome",
+        args: [getAddress(context.asset)],
+        blockNumber: bounds.oldBlockNumber,
+      }),
+    ]);
+    return annualizeRawGrowth(currentIndex, oldIndex, bounds.elapsedSeconds);
+  } catch {
+    return null;
+  }
+}
+
+export async function getAaveReserveHistoricalBorrowApy(
+  aToken: string,
+  chainId: number,
+  windowSeconds: number,
+): Promise<bigint | null> {
+  if (windowSeconds <= 0) return null;
+
+  const client = getViemClient(chainId);
+  if (!client) return null;
+
+  const context = await getAaveReserveContext(aToken, chainId);
+  if (!context) return null;
+
+  const bounds = await getHistoricalWindowBounds(chainId, windowSeconds);
+  if (!bounds) return null;
+
+  try {
+    const [currentIndex, oldIndex] = await Promise.all([
+      client.readContract({
+        address: getAddress(context.pool),
+        abi: aavePoolAbi,
+        functionName: "getReserveNormalizedVariableDebt",
+        args: [getAddress(context.asset)],
+        blockNumber: bounds.latestBlockNumber,
+      }),
+      client.readContract({
+        address: getAddress(context.pool),
+        abi: aavePoolAbi,
+        functionName: "getReserveNormalizedVariableDebt",
+        args: [getAddress(context.asset)],
+        blockNumber: bounds.oldBlockNumber,
+      }),
+    ]);
+    return annualizeRawGrowth(currentIndex, oldIndex, bounds.elapsedSeconds);
+  } catch {
+    return null;
+  }
+}
+
+export async function getAaveReserveCurrentSupplyApy(
+  aToken: string,
+  chainId: number,
+): Promise<bigint | null> {
+  const client = getViemClient(chainId);
+  if (!client) return null;
+
+  const context = await getAaveReserveContext(aToken, chainId);
+  if (!context) return null;
+
+  try {
+    const reserveData = await client.readContract({
+      address: getAddress(context.pool),
+      abi: aavePoolAbi,
+      functionName: "getReserveData",
+      args: [getAddress(context.asset)],
+    });
+    return rayAnnualRateToApyRaw(BigInt(reserveData[2]));
+  } catch {
+    return null;
+  }
+}
+
+export async function getAaveReserveCurrentBorrowApy(
+  aToken: string,
+  chainId: number,
+): Promise<bigint | null> {
+  const client = getViemClient(chainId);
+  if (!client) return null;
+
+  const context = await getAaveReserveContext(aToken, chainId);
+  if (!context) return null;
+
+  try {
+    const reserveData = await client.readContract({
+      address: getAddress(context.pool),
+      abi: aavePoolAbi,
+      functionName: "getReserveData",
+      args: [getAddress(context.asset)],
+    });
+    return rayAnnualRateToApyRaw(BigInt(reserveData[4]));
   } catch {
     return null;
   }
@@ -928,6 +1238,49 @@ async function findBlockAtOrBeforeTimestamp(
   return best;
 }
 
+async function getHistoricalWindowBounds(
+  chainId: number,
+  windowSeconds: number,
+): Promise<{
+  latestBlockNumber: bigint;
+  oldBlockNumber: bigint;
+  elapsedSeconds: number;
+} | null> {
+  if (windowSeconds <= 0) return null;
+
+  const client = getViemClient(chainId);
+  if (!client) return null;
+
+  let latestBlockNumber: bigint;
+  try {
+    latestBlockNumber = await client.getBlockNumber();
+  } catch {
+    return null;
+  }
+  if (latestBlockNumber <= 0n) return null;
+
+  const latestBlock = await getBlock(chainId, latestBlockNumber);
+  if (!latestBlock || latestBlock.timestamp <= 0n) return null;
+
+  const targetTs = latestBlock.timestamp - BigInt(windowSeconds);
+  if (targetTs <= 0n) return null;
+
+  const oldBlockNumber = await findBlockAtOrBeforeTimestamp(chainId, targetTs, latestBlockNumber);
+  if (oldBlockNumber === null) return null;
+
+  const oldBlock = await getBlock(chainId, oldBlockNumber);
+  if (!oldBlock) return null;
+
+  const elapsedSeconds = Number(latestBlock.timestamp - oldBlock.timestamp);
+  if (elapsedSeconds <= 0) return null;
+
+  return {
+    latestBlockNumber,
+    oldBlockNumber,
+    elapsedSeconds,
+  };
+}
+
 async function historicalConvertToAssetsAprForWindow(
   vault: string,
   chainId: number,
@@ -936,45 +1289,24 @@ async function historicalConvertToAssetsAprForWindow(
 ): Promise<bigint | null> {
   if (windowSeconds <= 0 || sharesRaw <= 0n) return null;
 
-  const client = getViemClient(chainId);
-  if (!client) return null;
+  const bounds = await getHistoricalWindowBounds(chainId, windowSeconds);
+  if (!bounds) return null;
 
-  let latestBlockNum: bigint;
-  try {
-    latestBlockNum = await client.getBlockNumber();
-  } catch {
-    return null;
-  }
-  if (latestBlockNum <= 0n) return null;
-
-  const latestBlockData = await getBlock(chainId, latestBlockNum);
-  if (!latestBlockData) return null;
-  const latestTs = latestBlockData.timestamp;
-  if (latestTs <= 0n) return null;
-
-  const targetTs = latestTs - BigInt(windowSeconds);
-  if (targetTs <= 0n) return null;
-
-  const oldBlockNum = await findBlockAtOrBeforeTimestamp(chainId, targetTs, latestBlockNum);
-  if (oldBlockNum === null) return null;
-
-  const oldBlockData = await getBlock(chainId, oldBlockNum);
-  if (!oldBlockData) return null;
-  const elapsed = Number(latestTs - oldBlockData.timestamp);
-  if (elapsed <= 0) return null;
-
-  const latestAssets = await getErc4626ConvertToAssets(vault, chainId, sharesRaw, latestBlockNum);
-  const oldAssets = await getErc4626ConvertToAssets(vault, chainId, sharesRaw, oldBlockNum);
+  const latestAssets = await getErc4626ConvertToAssets(
+    vault,
+    chainId,
+    sharesRaw,
+    bounds.latestBlockNumber,
+  );
+  const oldAssets = await getErc4626ConvertToAssets(
+    vault,
+    chainId,
+    sharesRaw,
+    bounds.oldBlockNumber,
+  );
   if (latestAssets === null || oldAssets === null || oldAssets <= 0n) return null;
 
-  try {
-    const growthRatio = Number(latestAssets) / Number(oldAssets);
-    if (growthRatio <= 0) return null;
-    const apy = Math.pow(growthRatio, SECONDS_PER_YEAR / elapsed) - 1.0;
-    return BigInt(Math.round(apy * Number(ONE)));
-  } catch {
-    return null;
-  }
+  return annualizeRawGrowth(latestAssets, oldAssets, bounds.elapsedSeconds);
 }
 
 export async function getHistoricalConvertToAssetsApr(
@@ -983,25 +1315,7 @@ export async function getHistoricalConvertToAssetsApr(
   windowSeconds: number,
   sharesRaw: bigint,
 ): Promise<bigint | null> {
-  if (windowSeconds <= 0 || sharesRaw <= 0n) return null;
-
-  const fallbackWindows = [
-    windowSeconds,
-    Math.min(windowSeconds, 86_400),
-    Math.min(windowSeconds, 21_600),
-    Math.min(windowSeconds, 3_600),
-    Math.min(windowSeconds, 900),
-  ];
-  const deduped: number[] = [];
-  for (const w of fallbackWindows) {
-    if (w > 0 && !deduped.includes(w)) deduped.push(w);
-  }
-
-  for (const w of deduped) {
-    const apr = await historicalConvertToAssetsAprForWindow(vault, chainId, w, sharesRaw);
-    if (apr !== null) return apr;
-  }
-  return null;
+  return historicalConvertToAssetsAprForWindow(vault, chainId, windowSeconds, sharesRaw);
 }
 
 export async function getOracleGrowthApr(
