@@ -1,4 +1,7 @@
-import type { StrategyCacheConfig } from "./config";
+import {
+  DEFAULT_HISTORICAL_WINDOW_SECONDS,
+  type StrategyCacheConfig,
+} from "./config";
 import { getAddress } from "viem";
 import {
   ONE,
@@ -52,7 +55,6 @@ const LOOPER_STRATEGY_TYPES = new Set([
   "pt-aave-looper",
 ]);
 const AAVE_STRATEGY_TYPES = new Set(["aave-looper", "pt-aave-looper"]);
-const DEFAULT_HISTORICAL_WINDOW_SECONDS = 3 * 24 * 60 * 60;
 const CHAIN_MORPHO_ADDRESSES: Record<number, string> = {
   1: "0xBBBBBbbBBb9cC5e90e3b3Af64bdAF62C37EEFFCb",
   137: "0x1bF0c2541F820E775182832f06c0B7Fc27A25f67",

@@ -7,7 +7,11 @@ import {
   getAddress,
 } from "viem";
 import { mainnet, arbitrum, type Chain } from "viem/chains";
-import type { OnchainSourceConfig, ChainSourceConfig } from "./config";
+import {
+  DEFAULT_HISTORICAL_WINDOW_SECONDS,
+  type OnchainSourceConfig,
+  type ChainSourceConfig,
+} from "./config";
 
 export const ONE = 10n ** 18n;
 export const RAY = 10n ** 27n;
@@ -1321,7 +1325,7 @@ export async function getHistoricalConvertToAssetsApr(
 export async function getOracleGrowthApr(
   oracleAddress: string,
   chainId: number,
-  windowSeconds: number = 3 * 24 * 60 * 60,
+  windowSeconds: number = DEFAULT_HISTORICAL_WINDOW_SECONDS,
 ): Promise<bigint | null> {
   const client = getViemClient(chainId);
   if (!client) return null;
