@@ -1321,7 +1321,7 @@ export async function getHistoricalConvertToAssetsApr(
 export async function getOracleGrowthApr(
   oracleAddress: string,
   chainId: number,
-  windowSeconds: number = 7 * 24 * 60 * 60,
+  windowSeconds: number = 3 * 24 * 60 * 60,
 ): Promise<bigint | null> {
   const client = getViemClient(chainId);
   if (!client) return null;
