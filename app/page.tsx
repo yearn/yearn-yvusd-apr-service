@@ -1,5 +1,5 @@
 import { headers } from "next/headers";
-import { readAprResult, getSmoothedApr, enrichComponentsWithSmoothed } from "@/lib/redis";
+import { readAprResult } from "@/lib/redis";
 import type { VaultAprResult } from "@/lib/models";
 import { CopyButton } from "./copy-button";
 
@@ -42,39 +42,22 @@ async function fetchKongVaults(): Promise<VaultAprResult[]> {
   return results;
 }
 
-async function fetchSmoothedVaults(): Promise<VaultAprResult[]> {
-  const data = await readAprResult();
-  if (!data) return [];
-  for (const [address, raw] of Object.entries(data)) {
-    const vault = raw as VaultAprResult;
-    const smoothed = await getSmoothedApr(address);
-    if (smoothed && smoothed.samples > 1) {
-      vault.apr = smoothed.apr;
-      vault.apy = smoothed.apy;
-    }
-    await enrichComponentsWithSmoothed(address, vault.components);
-  }
-  return Object.values(data) as VaultAprResult[];
-}
-
 async function fetchRawVaults(): Promise<VaultAprResult[]> {
   const data = await readAprResult();
   if (!data) return [];
   return Object.values(data) as VaultAprResult[];
 }
 
-type Format = "kong" | "smooth" | "raw";
+type Format = "kong" | "raw";
 
 export default async function Home({ searchParams }: { searchParams: Promise<{ format?: string }> }) {
   const params = await searchParams;
-  const format = (["kong", "smooth", "raw"].includes(params.format ?? "") ? params.format : "kong") as Format;
+  const format = (["kong", "raw"].includes(params.format ?? "") ? params.format : "kong") as Format;
 
   let vaults: VaultAprResult[] = [];
   try {
     if (format === "kong") {
       vaults = await fetchKongVaults();
-    } else if (format === "smooth") {
-      vaults = await fetchSmoothedVaults();
     } else {
       vaults = await fetchRawVaults();
     }
