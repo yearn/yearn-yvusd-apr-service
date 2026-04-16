@@ -978,6 +978,7 @@ function morphoVaultItemTotalApr(item: MorphoVaultApiItem | null | undefined): n
   if (!item?.state) return null;
 
   const netApy = parseFiniteNumber(item.state.netApy) ?? 0;
+  if (Number.isFinite(netApy) && netApy !== 0) return netApy;
   const baseApy = parseFiniteNumber(item.state.netApyExcludingRewards) ?? netApy;
   const rewards = Array.isArray(item.state.allRewards) ? item.state.allRewards : [];
   const rewardsApr = rewards.reduce(
@@ -992,6 +993,7 @@ function morphoVaultV2ItemTotalApr(item: MorphoVaultV2ApiItem | null | undefined
   if (!item) return null;
 
   const netApy = parseFiniteNumber(item.netApy) ?? 0;
+  if (Number.isFinite(netApy) && netApy !== 0) return netApy;
   const baseApy = parseFiniteNumber(item.netApyExcludingRewards) ?? netApy;
   const rewards = Array.isArray(item.rewards) ? item.rewards : [];
   const rewardsApr = rewards.reduce(
