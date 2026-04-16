@@ -1174,15 +1174,13 @@ function katanaVaultTotalApr(record: KatanaVaultApiRecord | null | undefined): n
 
   const extra = apr.extra ?? {};
   const nativeYield = parseFiniteNumber(extra.katanaNativeYield) ?? parseFiniteNumber(apr.netAPR) ?? 0;
-  const extrinsicYield = parseFiniteNumber(extra.extrinsicYield) ?? 0;
   const appRewards = parseFiniteNumber(extra.katanaAppRewardsAPR)
     ?? parseFiniteNumber(extra.katanaRewardsAPR)
     ?? 0;
   const fixedRate = parseFiniteNumber(extra.fixedRateKatanaRewards)
     ?? parseFiniteNumber(extra.FixedRateKatanaRewards)
     ?? 0;
-  const bonusApy = parseFiniteNumber(extra.katanaBonusAPY) ?? 0;
-  const total = nativeYield + extrinsicYield + appRewards + fixedRate + bonusApy;
+  const total = nativeYield + appRewards + fixedRate;
   if (Number.isFinite(total) && total !== 0) return total;
   return parseFiniteNumber(apr.netAPR);
 }
