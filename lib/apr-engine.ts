@@ -304,14 +304,16 @@ export class YvUsdAprEngine {
     chainId: number,
   ): Promise<bigint | null> {
     const strategyType = String(entry.meta.type ?? "").toLowerCase().replace(/_/g, "-");
+    const preferOffchain = entry.apr_source === "offchain";
 
-    if (OFFCHAIN_TYPES.has(strategyType)) {
+    if (preferOffchain || OFFCHAIN_TYPES.has(strategyType)) {
       const offchainApr = await this._getOffchainStrategyApr(entry, chainId);
       if (offchainApr !== null && offchainApr !== 0n) return offchainApr;
     }
 
     if (strategyType === "cross-chain") {
       const remoteVault = String(entry.meta.remote_vault ?? "").trim();
+      const remoteCounterpart = String(entry.meta.remote_counterpart ?? "").trim();
       let remoteChainId: number | null = null;
       try {
         const raw = entry.meta.remote_chain_id;
@@ -320,21 +322,22 @@ export class YvUsdAprEngine {
         remoteChainId = null;
       }
 
-      if (remoteVault) {
+      if (remoteCounterpart) {
         const remoteMeta = (entry.meta.remote_meta ?? {}) as Record<string, unknown>;
         let remoteType = String(
           entry.meta.remote_vault_type ?? (remoteMeta as Record<string, unknown>).type ?? "",
         ).toLowerCase().replace(/_/g, "-");
 
-        const remoteCfg = getStrategyConfig(remoteVault, this._cacheConfig);
+        const remoteCfg = getStrategyConfig(remoteCounterpart, this._cacheConfig);
         const remoteEntry: StrategyEntry = {
-          address: remoteVault,
+          address: remoteCounterpart,
           active: true,
           apr_source: String(remoteCfg.apr_source ?? "onchain").toLowerCase(),
           offchain: { ...(remoteCfg.offchain ?? {}) },
           meta: {
             ...(remoteCfg.meta ?? {}),
             ...remoteMeta,
+            ...(remoteVault ? { remote_vault: remoteVault } : {}),
             ...(remoteType ? { type: remoteType } : {}),
           },
           points: Boolean(remoteCfg.points ?? false),
@@ -351,18 +354,13 @@ export class YvUsdAprEngine {
 
         if (remoteChainId) {
           const remoteApr = await getStrategyApr(
-            remoteVault,
+            remoteCounterpart,
             debtChange,
             remoteChainId,
           );
           if (remoteApr !== null) return remoteApr;
         }
       }
-    }
-
-    if (entry.apr_source === "offchain") {
-      const offchainApr = await this._getOffchainStrategyApr(entry, chainId);
-      if (offchainApr !== null && offchainApr !== 0n) return offchainApr;
     }
 
     return getStrategyApr(entry.address, debtChange, chainId);
