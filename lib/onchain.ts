@@ -99,6 +99,9 @@ const pendleRouterConstAbi = parseAbi([
 const routerConstAbi = parseAbi([
   "function ROUTER() view returns (address)",
 ]);
+const strategyVaultAbi = parseAbi([
+  "function vault() view returns (address)",
+]);
 const pendleMarketAbi = parseAbi([
   "function market() view returns (address)",
 ]);
@@ -129,9 +132,16 @@ const collateralTokenAbi = parseAbi([
 
 const PENDLE_API_BASE_URL = "https://api-v2.pendle.finance/core/v1";
 const PENDLE_API_CACHE_TTL_MS = 60_000;
+const MORPHO_API_URL = "https://blue-api.morpho.org/graphql";
+const MORPHO_API_CACHE_TTL_MS = 60_000;
+const KATANA_APR_API_URL = "https://katana-apr.yearn.fi/api/vaults";
+const KATANA_APR_CACHE_TTL_MS = 60_000;
 const CHAIN_PENDLE_ROUTER_STATIC_ADDRESSES: Record<number, string> = {
   1: "0x263833d47eA3fA4a30f269323aba6a107f9eB14C",
   42161: "0xAdB09F65bd90d19e3148D9ccb693F3161C6DB3E8",
+};
+const AAVE_POOL_ADDRESSES: Record<number, string> = {
+  1: "0x87870Bca3F3fD6335C3F4ce8392D69350B4fa4E2",
 };
 const pendleApiCache = new Map<
   string,
@@ -140,9 +150,64 @@ const pendleApiCache = new Map<
     entries: Array<{ pt: string; market: string; apy: number | null }>;
   }
 >();
+const morphoApiCache = new Map<
+  string,
+  { fetchedAt: number; apr: number | null }
+>();
+const katanaApiCache = new Map<
+  string,
+  {
+    fetchedAt: number;
+    payload: Record<string, KatanaVaultApiRecord>;
+  }
+>();
 
 const clients: Map<number, PublicClient> = new Map();
 let _sourceConfig: OnchainSourceConfig | undefined;
+
+interface MorphoVaultApiReward {
+  supplyApr?: number | null;
+}
+
+interface MorphoVaultApiItem {
+  address?: string;
+  name?: string;
+  symbol?: string;
+  asset?: { symbol?: string | null } | null;
+  state?: {
+    netApy?: number | null;
+    netApyExcludingRewards?: number | null;
+    allRewards?: MorphoVaultApiReward[] | null;
+  } | null;
+}
+
+interface MorphoVaultV2ApiItem {
+  address?: string;
+  name?: string;
+  symbol?: string;
+  asset?: { symbol?: string | null } | null;
+  netApy?: number | null;
+  netApyExcludingRewards?: number | null;
+  rewards?: MorphoVaultApiReward[] | null;
+}
+
+interface KatanaVaultAprExtra {
+  katanaRewardsAPR?: number | null;
+  katanaAppRewardsAPR?: number | null;
+  fixedRateKatanaRewards?: number | null;
+  FixedRateKatanaRewards?: number | null;
+  katanaBonusAPY?: number | null;
+  extrinsicYield?: number | null;
+  katanaNativeYield?: number | null;
+}
+
+interface KatanaVaultApiRecord {
+  address?: string;
+  apr?: {
+    netAPR?: number | null;
+    extra?: KatanaVaultAprExtra | null;
+  } | null;
+}
 
 export function initOnchainClients(config: OnchainSourceConfig): void {
   _sourceConfig = config;
@@ -326,6 +391,30 @@ function parseAddressRef(value: unknown): string | null {
   if (!candidate.startsWith("0x")) return null;
   try {
     return getAddress(candidate);
+  } catch {
+    return null;
+  }
+}
+
+function parseFiniteNumber(value: unknown): number | null {
+  if (typeof value !== "number") return null;
+  return Number.isFinite(value) ? value : null;
+}
+
+function aprFloatToRaw(apr: number): bigint | null {
+  if (!Number.isFinite(apr)) return null;
+  try {
+    return BigInt(Math.round(apr * Number(ONE)));
+  } catch {
+    return null;
+  }
+}
+
+function getAavePoolAddress(chainId: number): string | null {
+  const address = AAVE_POOL_ADDRESSES[chainId];
+  if (!address) return null;
+  try {
+    return getAddress(address);
   } catch {
     return null;
   }
@@ -749,6 +838,13 @@ export async function getStrategyPendleRouter(
   return router ?? null;
 }
 
+export async function getStrategyVault(
+  strategy: string,
+  chainId: number,
+): Promise<string | null> {
+  return probeAddress(getAddress(strategy), chainId, strategyVaultAbi, "vault");
+}
+
 async function getPendleRouterStatic(chainId: number): Promise<string | null> {
   const address = CHAIN_PENDLE_ROUTER_STATIC_ADDRESSES[chainId];
   if (!address) return null;
@@ -780,6 +876,20 @@ async function getAaveReserveContext(
       }),
     ]);
     return { pool: getAddress(pool), asset: getAddress(asset) };
+  } catch {
+    return null;
+  }
+}
+
+async function getAaveAssetContext(
+  asset: string,
+  chainId: number,
+): Promise<{ pool: string; asset: string } | null> {
+  const pool = getAavePoolAddress(chainId);
+  if (!pool) return null;
+
+  try {
+    return { pool, asset: getAddress(asset) };
   } catch {
     return null;
   }
@@ -862,6 +972,260 @@ export async function getPendleMarketApyFromApi(
   }
 
   return { market: match.market, apyRaw };
+}
+
+function morphoVaultItemTotalApr(item: MorphoVaultApiItem | null | undefined): number | null {
+  if (!item?.state) return null;
+
+  const netApy = parseFiniteNumber(item.state.netApy) ?? 0;
+  if (Number.isFinite(netApy) && netApy !== 0) return netApy;
+  const baseApy = parseFiniteNumber(item.state.netApyExcludingRewards) ?? netApy;
+  const rewards = Array.isArray(item.state.allRewards) ? item.state.allRewards : [];
+  const rewardsApr = rewards.reduce(
+    (sum, reward) => sum + (parseFiniteNumber(reward?.supplyApr) ?? 0),
+    0,
+  );
+  const total = baseApy + rewardsApr;
+  return Number.isFinite(total) ? total : null;
+}
+
+function morphoVaultV2ItemTotalApr(item: MorphoVaultV2ApiItem | null | undefined): number | null {
+  if (!item) return null;
+
+  const netApy = parseFiniteNumber(item.netApy) ?? 0;
+  if (Number.isFinite(netApy) && netApy !== 0) return netApy;
+  const baseApy = parseFiniteNumber(item.netApyExcludingRewards) ?? netApy;
+  const rewards = Array.isArray(item.rewards) ? item.rewards : [];
+  const rewardsApr = rewards.reduce(
+    (sum, reward) => sum + (parseFiniteNumber(reward?.supplyApr) ?? 0),
+    0,
+  );
+  const total = baseApy + rewardsApr;
+  return Number.isFinite(total) ? total : null;
+}
+
+export async function getMorphoVaultAprFromApi(
+  chainId: number,
+  params: {
+    vaultAddress?: string | null;
+    search?: string | null;
+    exactName?: string | null;
+    assetSymbol?: string | null;
+  },
+): Promise<bigint | null> {
+  const vaultAddress = params.vaultAddress ? parseAddressRef(params.vaultAddress) : null;
+  const search = typeof params.search === "string" ? params.search.trim() : "";
+  const exactName = typeof params.exactName === "string" ? params.exactName.trim().toLowerCase() : "";
+  const assetSymbol = typeof params.assetSymbol === "string"
+    ? params.assetSymbol.trim().toLowerCase()
+    : "";
+
+  if (!vaultAddress && !search) return null;
+
+  const cacheKey = [
+    String(chainId),
+    vaultAddress?.toLowerCase() ?? "",
+    search.toLowerCase(),
+    exactName,
+    assetSymbol,
+  ].join(":");
+  const cached = morphoApiCache.get(cacheKey);
+  const now = Date.now();
+  if (cached && now - cached.fetchedAt <= MORPHO_API_CACHE_TTL_MS) {
+    return cached.apr === null ? null : aprFloatToRaw(cached.apr);
+  }
+
+  try {
+    let items: MorphoVaultApiItem[] = [];
+
+    if (vaultAddress) {
+      const queryV1 = `
+        query MorphoVaultByAddress($address: String!, $chainId: Int!) {
+          vaultByAddress(address: $address, chainId: $chainId) {
+            address
+            name
+            symbol
+            asset { symbol }
+            state {
+              netApy
+              netApyExcludingRewards
+              allRewards {
+                supplyApr
+              }
+            }
+          }
+        }
+      `;
+
+      const responseV1 = await fetch(MORPHO_API_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ query: queryV1, variables: { address: vaultAddress, chainId } }),
+      });
+      if (responseV1.ok) {
+        const payload = await responseV1.json() as {
+          data?: { vaultByAddress?: MorphoVaultApiItem | null };
+          errors?: unknown[];
+        };
+        if (!Array.isArray(payload.errors) || payload.errors.length === 0) {
+          if (payload.data?.vaultByAddress) {
+            items = [payload.data.vaultByAddress];
+          }
+        }
+      }
+
+      if (!items.length) {
+        const queryV2 = `
+          query MorphoVaultV2ByAddress($address: String!, $chainId: Int!) {
+            vaultV2ByAddress(address: $address, chainId: $chainId) {
+              address
+              name
+              symbol
+              asset { symbol }
+              netApy
+              netApyExcludingRewards
+              rewards {
+                supplyApr
+              }
+            }
+          }
+        `;
+        const responseV2 = await fetch(MORPHO_API_URL, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ query: queryV2, variables: { address: vaultAddress, chainId } }),
+        });
+        if (!responseV2.ok) return null;
+        const payloadV2 = await responseV2.json() as {
+          data?: { vaultV2ByAddress?: MorphoVaultV2ApiItem | null };
+          errors?: unknown[];
+        };
+        if (Array.isArray(payloadV2.errors) && payloadV2.errors.length > 0) return null;
+        const apr = morphoVaultV2ItemTotalApr(payloadV2.data?.vaultV2ByAddress);
+        morphoApiCache.set(cacheKey, { fetchedAt: now, apr });
+        return apr === null ? null : aprFloatToRaw(apr);
+      }
+    } else {
+      const query = `
+        query MorphoVaultSearch($search: String!) {
+          vaults(first: 20, where: { chainId_in: [${chainId}], search: $search }) {
+            items {
+              address
+              name
+              symbol
+              asset { symbol }
+              state {
+                netApy
+                netApyExcludingRewards
+                allRewards {
+                  supplyApr
+                }
+              }
+            }
+          }
+        }
+      `;
+      const response = await fetch(MORPHO_API_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ query, variables: { search } }),
+      });
+      if (!response.ok) return null;
+      const payload = await response.json() as {
+        data?: { vaults?: { items?: MorphoVaultApiItem[] | null } | null };
+        errors?: unknown[];
+      };
+      if (Array.isArray(payload.errors) && payload.errors.length > 0) return null;
+      items = Array.isArray(payload.data?.vaults?.items) ? payload.data!.vaults!.items! : [];
+    }
+
+    if (!items.length) {
+      morphoApiCache.set(cacheKey, { fetchedAt: now, apr: null });
+      return null;
+    }
+
+    let candidates = items;
+    if (exactName) {
+      const exactMatches = candidates.filter((item) => (item.name ?? "").trim().toLowerCase() === exactName);
+      if (exactMatches.length > 0) candidates = exactMatches;
+    }
+    if (assetSymbol) {
+      const assetMatches = candidates.filter(
+        (item) => (item.asset?.symbol ?? "").trim().toLowerCase() === assetSymbol,
+      );
+      if (assetMatches.length > 0) candidates = assetMatches;
+    }
+
+    candidates = [...candidates].sort((a, b) => {
+      const aprA = morphoVaultItemTotalApr(a) ?? Number.NEGATIVE_INFINITY;
+      const aprB = morphoVaultItemTotalApr(b) ?? Number.NEGATIVE_INFINITY;
+      return aprB - aprA;
+    });
+
+    const apr = morphoVaultItemTotalApr(candidates[0]);
+    morphoApiCache.set(cacheKey, { fetchedAt: now, apr });
+    return apr === null ? null : aprFloatToRaw(apr);
+  } catch {
+    return null;
+  }
+}
+
+function katanaVaultTotalApr(record: KatanaVaultApiRecord | null | undefined): number | null {
+  const apr = record?.apr;
+  if (!apr) return null;
+
+  const extra = apr.extra ?? {};
+  const nativeYield = parseFiniteNumber(extra.katanaNativeYield) ?? parseFiniteNumber(apr.netAPR) ?? 0;
+  const appRewards = parseFiniteNumber(extra.katanaAppRewardsAPR)
+    ?? parseFiniteNumber(extra.katanaRewardsAPR)
+    ?? 0;
+  const fixedRate = parseFiniteNumber(extra.fixedRateKatanaRewards)
+    ?? parseFiniteNumber(extra.FixedRateKatanaRewards)
+    ?? 0;
+  const total = nativeYield + appRewards + fixedRate;
+  if (Number.isFinite(total) && total !== 0) return total;
+  return parseFiniteNumber(apr.netAPR);
+}
+
+export async function getKatanaVaultAprFromApi(vaultAddress: string): Promise<bigint | null> {
+  let normalizedAddress: string;
+  try {
+    normalizedAddress = getAddress(vaultAddress).toLowerCase();
+  } catch {
+    return null;
+  }
+
+  const cacheKey = "vaults";
+  const now = Date.now();
+  let cached = katanaApiCache.get(cacheKey);
+
+  if (!cached || now - cached.fetchedAt > KATANA_APR_CACHE_TTL_MS) {
+    try {
+      const response = await fetch(KATANA_APR_API_URL, {
+        method: "GET",
+        headers: { accept: "application/json" },
+      });
+      if (!response.ok) return null;
+
+      const payload = await response.json() as Record<string, KatanaVaultApiRecord>;
+      const normalized: Record<string, KatanaVaultApiRecord> = {};
+      for (const [key, value] of Object.entries(payload ?? {})) {
+        try {
+          normalized[getAddress(key).toLowerCase()] = value;
+        } catch {
+          // Ignore malformed keys from upstream.
+        }
+      }
+      cached = { fetchedAt: now, payload: normalized };
+      katanaApiCache.set(cacheKey, cached);
+    } catch {
+      return null;
+    }
+  }
+
+  const record = cached.payload[normalizedAddress];
+  const apr = katanaVaultTotalApr(record);
+  return apr === null ? null : aprFloatToRaw(apr);
 }
 
 export function lnImpliedRateToApyRaw(lnImpliedRate: bigint): bigint {
@@ -1145,6 +1509,45 @@ export async function getAaveReserveHistoricalBorrowApy(
   }
 }
 
+export async function getAaveAssetHistoricalBorrowApy(
+  asset: string,
+  chainId: number,
+  windowSeconds: number,
+): Promise<bigint | null> {
+  if (windowSeconds <= 0) return null;
+
+  const client = getViemClient(chainId);
+  if (!client) return null;
+
+  const context = await getAaveAssetContext(asset, chainId);
+  if (!context) return null;
+
+  const bounds = await getHistoricalWindowBounds(chainId, windowSeconds);
+  if (!bounds) return null;
+
+  try {
+    const [currentIndex, oldIndex] = await Promise.all([
+      client.readContract({
+        address: getAddress(context.pool),
+        abi: aavePoolAbi,
+        functionName: "getReserveNormalizedVariableDebt",
+        args: [getAddress(context.asset)],
+        blockNumber: bounds.latestBlockNumber,
+      }),
+      client.readContract({
+        address: getAddress(context.pool),
+        abi: aavePoolAbi,
+        functionName: "getReserveNormalizedVariableDebt",
+        args: [getAddress(context.asset)],
+        blockNumber: bounds.oldBlockNumber,
+      }),
+    ]);
+    return annualizeRawGrowth(currentIndex, oldIndex, bounds.elapsedSeconds);
+  } catch {
+    return null;
+  }
+}
+
 export async function getAaveReserveCurrentSupplyApy(
   aToken: string,
   chainId: number,
@@ -1176,6 +1579,29 @@ export async function getAaveReserveCurrentBorrowApy(
   if (!client) return null;
 
   const context = await getAaveReserveContext(aToken, chainId);
+  if (!context) return null;
+
+  try {
+    const reserveData = await client.readContract({
+      address: getAddress(context.pool),
+      abi: aavePoolAbi,
+      functionName: "getReserveData",
+      args: [getAddress(context.asset)],
+    });
+    return rayAnnualRateToApyRaw(BigInt(reserveData[4]));
+  } catch {
+    return null;
+  }
+}
+
+export async function getAaveAssetCurrentBorrowApy(
+  asset: string,
+  chainId: number,
+): Promise<bigint | null> {
+  const client = getViemClient(chainId);
+  if (!client) return null;
+
+  const context = await getAaveAssetContext(asset, chainId);
   if (!context) return null;
 
   try {

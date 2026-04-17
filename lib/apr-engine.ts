@@ -18,10 +18,14 @@ import {
   getPendlePtRealizedApy,
   getPendleMarketImpliedApy,
   getPendleMarketApyFromApi,
+  getMorphoVaultAprFromApi,
   getAaveReserveCurrentBorrowApy,
+  getAaveAssetCurrentBorrowApy,
   getAaveReserveCurrentSupplyApy,
   getAaveReserveHistoricalBorrowApy,
+  getAaveAssetHistoricalBorrowApy,
   getAaveReserveHistoricalSupplyApy,
+  getKatanaVaultAprFromApi,
   getMorphoMarketBorrowApy,
   getMorphoMarketHistoricalBorrowApy,
   fetchVaultAprData,
@@ -389,6 +393,12 @@ export class YvUsdAprEngine {
     if (mode === "oracle-growth") {
       return this._getOracleGrowthOffchainApr(entry, chainId, cfg);
     }
+    if (mode === "morpho-api") {
+      return this._getMorphoApiApr(chainId, cfg);
+    }
+    if (mode === "katana-api") {
+      return this._getKatanaApiApr(entry, cfg);
+    }
     if (mode === "pt-estimated" || mode === "pt") {
       return this._getPtEstimatedOffchainApr(entry, chainId, cfg);
     }
@@ -398,6 +408,37 @@ export class YvUsdAprEngine {
     }
 
     return null;
+  }
+
+  private async _getMorphoApiApr(
+    chainId: number,
+    cfg: Record<string, unknown>,
+  ): Promise<bigint | null> {
+    const vaultAddress = String(cfg.vault ?? cfg.address ?? "").trim() || null;
+    const search = String(cfg.search ?? "").trim() || null;
+    const exactName = String(cfg.exact_name ?? cfg.exactName ?? "").trim() || null;
+    const assetSymbol = String(cfg.asset_symbol ?? cfg.assetSymbol ?? "").trim() || null;
+
+    return getMorphoVaultAprFromApi(chainId, {
+      vaultAddress,
+      search,
+      exactName,
+      assetSymbol,
+    });
+  }
+
+  private async _getKatanaApiApr(
+    entry: StrategyEntry,
+    cfg: Record<string, unknown>,
+  ): Promise<bigint | null> {
+    const vaultAddress = String(
+      cfg.vault
+      ?? cfg.remote_vault
+      ?? entry.meta.remote_vault
+      ?? "",
+    ).trim();
+    if (!vaultAddress) return null;
+    return getKatanaVaultAprFromApi(vaultAddress);
   }
 
   private async _getPtEstimatedOffchainApr(
@@ -504,7 +545,7 @@ export class YvUsdAprEngine {
 
     let collateralApr = parseAprValue(cfg, "collateral_apr_raw", "collateral_apr");
     if (collateralApr === null) {
-      collateralApr = await this._getCollateralAssetApr(entry, chainId, windowSeconds);
+      collateralApr = await this._getCollateralAssetApr(entry, chainId, windowSeconds, cfg);
     }
     if (collateralApr === null) return null;
 
@@ -529,13 +570,17 @@ export class YvUsdAprEngine {
     entry: StrategyEntry,
     chainId: number,
     windowSeconds: number,
+    cfg: Record<string, unknown>,
   ): Promise<bigint | null> {
     const meta = entry.meta ?? {};
     const strategyType = String(meta.type ?? "").trim().toLowerCase().replace(/_/g, "-");
     const collateral = meta.collateral as { address?: string } | undefined;
-    if (!collateral || typeof collateral !== "object") return null;
-
-    const collateralAddress = String(collateral.address ?? "").trim();
+    const collateralAddress = String(
+      cfg.collateral_address
+      ?? cfg.collateralAddress
+      ?? collateral?.address
+      ?? "",
+    ).trim();
     if (!collateralAddress) return null;
 
     const overridden = await this._getAddressOverrideApr(collateralAddress, chainId, windowSeconds);
@@ -642,8 +687,11 @@ export class YvUsdAprEngine {
     const aToken = String(
       cfg.a_token ?? cfg.atoken ?? cfg.aToken ?? entry.meta.aToken ?? "",
     ).trim();
+    const borrowAsset = String(
+      cfg.borrow_asset ?? cfg.borrowAsset ?? "",
+    ).trim();
 
-    if (AAVE_STRATEGY_TYPES.has(strategyType) || aToken) {
+    if (AAVE_STRATEGY_TYPES.has(strategyType) || aToken || borrowAsset) {
       if (aToken) {
         const historicalBorrow = await getAaveReserveHistoricalBorrowApy(
           aToken,
@@ -653,6 +701,16 @@ export class YvUsdAprEngine {
         if (historicalBorrow !== null) return historicalBorrow;
 
         return getAaveReserveCurrentBorrowApy(aToken, chainId);
+      }
+      if (borrowAsset) {
+        const historicalBorrow = await getAaveAssetHistoricalBorrowApy(
+          borrowAsset,
+          chainId,
+          windowSeconds,
+        );
+        if (historicalBorrow !== null) return historicalBorrow;
+
+        return getAaveAssetCurrentBorrowApy(borrowAsset, chainId);
       }
       return null;
     }
@@ -689,6 +747,12 @@ export class YvUsdAprEngine {
   ): Promise<bigint | null> {
     const manual = parseIntValue(cfg.leverage_ratio_raw);
     if (manual !== null) return manual;
+    const overrideAddress = String(
+      cfg.leverage_ratio_address ?? cfg.leverageRatioAddress ?? "",
+    ).trim();
+    if (overrideAddress) {
+      return getStrategyLeverageRatio(overrideAddress, chainId);
+    }
     return getStrategyLeverageRatio(entry.address, chainId);
   }
 
