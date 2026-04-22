@@ -129,6 +129,38 @@ export class YvUsdAprEngine {
     return `${vault.toLowerCase()}:${locked.toLowerCase()}:${chainId}:${delta}`;
   }
 
+  private _resolveRemoteChainId(
+    entry: StrategyEntry,
+    cfg?: Record<string, unknown>,
+    fallbackChainId?: number,
+  ): number | null {
+    const raw = cfg?.chain_id ?? cfg?.remote_chain_id ?? entry.meta.remote_chain_id;
+    const parsed = raw === null || raw === undefined ? null : Number(raw);
+    if (parsed !== null && Number.isFinite(parsed) && parsed > 0) return parsed;
+    return fallbackChainId ?? null;
+  }
+
+  private _resolveRemoteOracleAddress(
+    entry: StrategyEntry,
+    cfg?: Record<string, unknown>,
+  ): string | null {
+    const remoteVault = String(
+      cfg?.vault
+      ?? cfg?.remote_vault
+      ?? entry.meta.remote_vault
+      ?? "",
+    ).trim();
+    if (remoteVault) return remoteVault;
+
+    const remoteCounterpart = String(
+      cfg?.strategy
+      ?? cfg?.remote_counterpart
+      ?? entry.meta.remote_counterpart
+      ?? "",
+    ).trim();
+    return remoteCounterpart || null;
+  }
+
   async getCustomExpectedApr(
     vaultAddress: string,
     lockedVaultAddress: string | null,
@@ -307,20 +339,14 @@ export class YvUsdAprEngine {
     const preferOffchain = entry.apr_source === "offchain";
 
     if (preferOffchain || OFFCHAIN_TYPES.has(strategyType)) {
-      const offchainApr = await this._getOffchainStrategyApr(entry, chainId);
+      const offchainApr = await this._getOffchainStrategyApr(entry, chainId, debtChange);
       if (offchainApr !== null && offchainApr !== 0n) return offchainApr;
     }
 
     if (strategyType === "cross-chain") {
       const remoteVault = String(entry.meta.remote_vault ?? "").trim();
       const remoteCounterpart = String(entry.meta.remote_counterpart ?? "").trim();
-      let remoteChainId: number | null = null;
-      try {
-        const raw = entry.meta.remote_chain_id;
-        remoteChainId = raw !== null && raw !== undefined ? Number(raw) : null;
-      } catch {
-        remoteChainId = null;
-      }
+      const remoteChainId = this._resolveRemoteChainId(entry);
 
       if (remoteCounterpart) {
         const remoteMeta = (entry.meta.remote_meta ?? {}) as Record<string, unknown>;
@@ -348,13 +374,14 @@ export class YvUsdAprEngine {
           const offchainApr = await this._getOffchainStrategyApr(
             remoteEntry,
             remoteChainId ?? chainId,
+            debtChange,
           );
           if (offchainApr !== null && offchainApr !== 0n) return offchainApr;
         }
 
         if (remoteChainId) {
           const remoteApr = await getStrategyApr(
-            remoteCounterpart,
+            this._resolveRemoteOracleAddress(entry) ?? remoteCounterpart,
             debtChange,
             remoteChainId,
           );
@@ -369,6 +396,7 @@ export class YvUsdAprEngine {
   private async _getOffchainStrategyApr(
     entry: StrategyEntry,
     chainId: number,
+    debtChange: bigint = 0n,
   ): Promise<bigint | null> {
     const cfg = { ...(entry.offchain ?? {}) };
     let mode = String(cfg.type ?? "").trim().toLowerCase().replace(/_/g, "-");
@@ -395,7 +423,7 @@ export class YvUsdAprEngine {
       return this._getMorphoApiApr(chainId, cfg);
     }
     if (mode === "katana-api") {
-      return this._getKatanaApiApr(entry, cfg);
+      return this._getKatanaApiApr(entry, chainId, cfg);
     }
     if (mode === "pt-estimated" || mode === "pt") {
       return this._getPtEstimatedOffchainApr(entry, chainId, cfg);
@@ -427,16 +455,13 @@ export class YvUsdAprEngine {
 
   private async _getKatanaApiApr(
     entry: StrategyEntry,
+    chainId: number,
     cfg: Record<string, unknown>,
   ): Promise<bigint | null> {
-    const vaultAddress = String(
-      cfg.vault
-      ?? cfg.remote_vault
-      ?? entry.meta.remote_vault
-      ?? "",
-    ).trim();
+    const vaultAddress = String(cfg.vault ?? cfg.remote_vault ?? entry.meta.remote_vault ?? "").trim();
+    const remoteChainId = this._resolveRemoteChainId(entry, cfg, chainId);
     if (!vaultAddress) return null;
-    return getKatanaVaultAprFromApi(vaultAddress);
+    return getKatanaVaultAprFromApi(remoteChainId ?? chainId, vaultAddress);
   }
 
   private async _getPtEstimatedOffchainApr(
