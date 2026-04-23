@@ -134,7 +134,7 @@ const PENDLE_API_BASE_URL = "https://api-v2.pendle.finance/core/v1";
 const PENDLE_API_CACHE_TTL_MS = 60_000;
 const MORPHO_API_URL = "https://blue-api.morpho.org/graphql";
 const MORPHO_API_CACHE_TTL_MS = 60_000;
-const KATANA_APR_API_URL = "https://katana-apr.yearn.fi/api/vaults";
+const KATANA_SNAPSHOT_API_BASE_URL = "https://kong.yearn.fi/api/rest/snapshot";
 const KATANA_APR_CACHE_TTL_MS = 60_000;
 const CHAIN_PENDLE_ROUTER_STATIC_ADDRESSES: Record<number, string> = {
   1: "0x263833d47eA3fA4a30f269323aba6a107f9eB14C",
@@ -158,7 +158,7 @@ const katanaApiCache = new Map<
   string,
   {
     fetchedAt: number;
-    payload: Record<string, KatanaVaultApiRecord>;
+    payload: KatanaVaultSnapshot;
   }
 >();
 
@@ -191,21 +191,19 @@ interface MorphoVaultV2ApiItem {
   rewards?: MorphoVaultApiReward[] | null;
 }
 
-interface KatanaVaultAprExtra {
-  katanaRewardsAPR?: number | null;
+interface KatanaEstimatedComponents {
   katanaAppRewardsAPR?: number | null;
   fixedRateKatanaRewards?: number | null;
-  FixedRateKatanaRewards?: number | null;
-  katanaBonusAPY?: number | null;
-  extrinsicYield?: number | null;
-  katanaNativeYield?: number | null;
 }
 
-interface KatanaVaultApiRecord {
-  address?: string;
-  apr?: {
-    netAPR?: number | null;
-    extra?: KatanaVaultAprExtra | null;
+interface KatanaVaultSnapshot {
+  performance?: {
+    oracle?: {
+      netAPR?: number | null;
+    } | null;
+    estimated?: {
+      components?: KatanaEstimatedComponents | null;
+    } | null;
   } | null;
 }
 
@@ -1170,24 +1168,31 @@ export async function getMorphoVaultAprFromApi(
   }
 }
 
-function katanaVaultTotalApr(record: KatanaVaultApiRecord | null | undefined): number | null {
-  const apr = record?.apr;
-  if (!apr) return null;
-
-  const extra = apr.extra ?? {};
-  const nativeYield = parseFiniteNumber(extra.katanaNativeYield) ?? parseFiniteNumber(apr.netAPR) ?? 0;
-  const appRewards = parseFiniteNumber(extra.katanaAppRewardsAPR)
-    ?? parseFiniteNumber(extra.katanaRewardsAPR)
-    ?? 0;
-  const fixedRate = parseFiniteNumber(extra.fixedRateKatanaRewards)
-    ?? parseFiniteNumber(extra.FixedRateKatanaRewards)
-    ?? 0;
-  const total = nativeYield + appRewards + fixedRate;
-  if (Number.isFinite(total) && total !== 0) return total;
-  return parseFiniteNumber(apr.netAPR);
+function katanaVaultTotalApr(snapshot: KatanaVaultSnapshot | null | undefined): number | null {
+  const oracle = snapshot?.performance?.oracle ?? {};
+  const baseApr = parseFiniteNumber(oracle.netAPR);
+  const rewardsApr = katanaVaultRewardsApr(snapshot);
+  if (baseApr !== null || rewardsApr !== null) {
+    const total = (baseApr ?? 0) + (rewardsApr ?? 0);
+    if (Number.isFinite(total)) return total;
+  }
+  return baseApr;
 }
 
-export async function getKatanaVaultAprFromApi(vaultAddress: string): Promise<bigint | null> {
+function katanaVaultRewardsApr(snapshot: KatanaVaultSnapshot | null | undefined): number | null {
+  const components = snapshot?.performance?.estimated?.components ?? {};
+  const appRewards = parseFiniteNumber(components.katanaAppRewardsAPR);
+  const fixedRate = parseFiniteNumber(components.fixedRateKatanaRewards);
+  if (appRewards !== null || fixedRate !== null) {
+    return (appRewards ?? 0) + (fixedRate ?? 0);
+  }
+  return null;
+}
+
+async function getKatanaVaultRecordFromApi(
+  chainId: number,
+  vaultAddress: string,
+): Promise<KatanaVaultSnapshot | null> {
   let normalizedAddress: string;
   try {
     normalizedAddress = getAddress(vaultAddress).toLowerCase();
@@ -1195,35 +1200,34 @@ export async function getKatanaVaultAprFromApi(vaultAddress: string): Promise<bi
     return null;
   }
 
-  const cacheKey = "vaults";
+  const cacheKey = `${chainId}:${normalizedAddress}`;
   const now = Date.now();
   let cached = katanaApiCache.get(cacheKey);
 
   if (!cached || now - cached.fetchedAt > KATANA_APR_CACHE_TTL_MS) {
     try {
-      const response = await fetch(KATANA_APR_API_URL, {
+      const response = await fetch(`${KATANA_SNAPSHOT_API_BASE_URL}/${chainId}/${normalizedAddress}`, {
         method: "GET",
         headers: { accept: "application/json" },
       });
       if (!response.ok) return null;
 
-      const payload = await response.json() as Record<string, KatanaVaultApiRecord>;
-      const normalized: Record<string, KatanaVaultApiRecord> = {};
-      for (const [key, value] of Object.entries(payload ?? {})) {
-        try {
-          normalized[getAddress(key).toLowerCase()] = value;
-        } catch {
-          // Ignore malformed keys from upstream.
-        }
-      }
-      cached = { fetchedAt: now, payload: normalized };
+      const payload = await response.json() as KatanaVaultSnapshot;
+      cached = { fetchedAt: now, payload };
       katanaApiCache.set(cacheKey, cached);
     } catch {
       return null;
     }
   }
 
-  const record = cached.payload[normalizedAddress];
+  return cached.payload ?? null;
+}
+
+export async function getKatanaVaultAprFromApi(
+  chainId: number,
+  vaultAddress: string,
+): Promise<bigint | null> {
+  const record = await getKatanaVaultRecordFromApi(chainId, vaultAddress);
   const apr = katanaVaultTotalApr(record);
   return apr === null ? null : aprFloatToRaw(apr);
 }
