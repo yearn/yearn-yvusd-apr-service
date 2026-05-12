@@ -58,9 +58,43 @@ apr:
       '0x41CA7586cC1311807B4605fBB748a3B8862b42b5':
         type: oracle-growth
         oracle: '0x8f30fF3d54e69D4dfD5E99a9937474FaDdf27009'
-        window_seconds: 604800
+        window_seconds: 172800
         fallback_apr: 0.04
     strategies:
+      # New convertors / compounders that need explicit APR routing.
+      '0xb44ee7869b9d47cd605b05022c8bd8612ebe53ee':
+        apr_source: offchain
+        offchain:
+          type: historical
+          address: '0xf689555121e529Ff0463e191F9Bd9d1E496164a7'
+      '0xc5b16e7efe1ca05714477b8edcab4dee9b93a27c':
+        apr_source: offchain
+        offchain:
+          type: katana-api
+          vault: '0x80c34BD3A3569E126e7055831036aa7b212cB159'
+      '0x7e71d8a63ca904f832ed35b39911f7eec36c8928':
+        apr_source: offchain
+        offchain:
+          type: aave-looper
+          collateral_address: '0x9D39A5DE30e57443BfF2A8307A4256c8797A3497'
+          borrow_asset: '0xdAC17F958D2ee523a2206206994597C13D831ec7'
+          leverage_ratio_address: '0xA0e0B2F2F28A7A9CB16F307582B247240BAc6db0'
+          window_seconds: 604800
+      '0x3d2467cbf82332dbfb38997cbc4d2192694d9490':
+        apr_source: offchain
+        offchain:
+          type: morpho-api
+          address: '0xb576765fB15505433aF24FEe2c0325895C559FB2'
+      '0xe0be46cc5ad2f56a7734a99ff403781b9c54c7b2':
+        apr_source: offchain
+        offchain:
+          type: morpho-api
+          address: '0x6dC58a0FdfC8D694e571DC59B9A52EEEa780E6bf'
+      '0xda29b5ddc82f968cd75ee69ff51a47d940318ebe':
+        apr_source: offchain
+        offchain:
+          type: historical
+          address: '0xC58D044404d8B14e953C115E67823784dEA53d8F'
       '0x5f9dba2805411a8382fdb4e69d4f2da8efaf1f89':
         points: true
     chains:

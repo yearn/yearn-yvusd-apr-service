@@ -7,9 +7,14 @@ import {
   getAddress,
 } from "viem";
 import { mainnet, arbitrum, type Chain } from "viem/chains";
-import type { OnchainSourceConfig, ChainSourceConfig } from "./config";
+import {
+  DEFAULT_HISTORICAL_WINDOW_SECONDS,
+  type OnchainSourceConfig,
+  type ChainSourceConfig,
+} from "./config";
 
 export const ONE = 10n ** 18n;
+export const RAY = 10n ** 27n;
 export const SECONDS_PER_YEAR = 31_536_000;
 
 const chainDefs: Record<number, Chain> = {
@@ -70,8 +75,20 @@ const targetLeverageAbi = parseAbi([
 ]);
 const morphoAbi = parseAbi(["function morpho() view returns (address)"]);
 const aTokenAbi = parseAbi(["function aToken() view returns (address)"]);
+const aaveReceiptTokenAbi = parseAbi([
+  "function POOL() view returns (address)",
+  "function UNDERLYING_ASSET_ADDRESS() view returns (address)",
+]);
+const aavePoolAbi = parseAbi([
+  "function getReserveNormalizedIncome(address asset) view returns (uint256)",
+  "function getReserveNormalizedVariableDebt(address asset) view returns (uint256)",
+  "function getReserveData(address asset) view returns ((uint256), uint128, uint128, uint128, uint128, uint128, uint40, uint16, address, address, address, address, uint128, uint128, uint128)",
+]);
 const pendleRouterAbi = parseAbi([
   "function pendleRouter() view returns (address)",
+]);
+const pendleRouterStaticAbi = parseAbi([
+  "function getPtToAssetRate(address market) view returns (uint256)",
 ]);
 const routerAbi = parseAbi([
   "function router() view returns (address)",
@@ -81,6 +98,9 @@ const pendleRouterConstAbi = parseAbi([
 ]);
 const routerConstAbi = parseAbi([
   "function ROUTER() view returns (address)",
+]);
+const strategyVaultAbi = parseAbi([
+  "function vault() view returns (address)",
 ]);
 const pendleMarketAbi = parseAbi([
   "function market() view returns (address)",
@@ -112,6 +132,17 @@ const collateralTokenAbi = parseAbi([
 
 const PENDLE_API_BASE_URL = "https://api-v2.pendle.finance/core/v1";
 const PENDLE_API_CACHE_TTL_MS = 60_000;
+const MORPHO_API_URL = "https://blue-api.morpho.org/graphql";
+const MORPHO_API_CACHE_TTL_MS = 60_000;
+const KATANA_SNAPSHOT_API_BASE_URL = "https://kong.yearn.fi/api/rest/snapshot";
+const KATANA_APR_CACHE_TTL_MS = 60_000;
+const CHAIN_PENDLE_ROUTER_STATIC_ADDRESSES: Record<number, string> = {
+  1: "0x263833d47eA3fA4a30f269323aba6a107f9eB14C",
+  42161: "0xAdB09F65bd90d19e3148D9ccb693F3161C6DB3E8",
+};
+const AAVE_POOL_ADDRESSES: Record<number, string> = {
+  1: "0x87870Bca3F3fD6335C3F4ce8392D69350B4fa4E2",
+};
 const pendleApiCache = new Map<
   string,
   {
@@ -119,9 +150,62 @@ const pendleApiCache = new Map<
     entries: Array<{ pt: string; market: string; apy: number | null }>;
   }
 >();
+const morphoApiCache = new Map<
+  string,
+  { fetchedAt: number; apr: number | null }
+>();
+const katanaApiCache = new Map<
+  string,
+  {
+    fetchedAt: number;
+    payload: KatanaVaultSnapshot;
+  }
+>();
 
 const clients: Map<number, PublicClient> = new Map();
 let _sourceConfig: OnchainSourceConfig | undefined;
+
+interface MorphoVaultApiReward {
+  supplyApr?: number | null;
+}
+
+interface MorphoVaultApiItem {
+  address?: string;
+  name?: string;
+  symbol?: string;
+  asset?: { symbol?: string | null } | null;
+  state?: {
+    netApy?: number | null;
+    netApyExcludingRewards?: number | null;
+    allRewards?: MorphoVaultApiReward[] | null;
+  } | null;
+}
+
+interface MorphoVaultV2ApiItem {
+  address?: string;
+  name?: string;
+  symbol?: string;
+  asset?: { symbol?: string | null } | null;
+  netApy?: number | null;
+  netApyExcludingRewards?: number | null;
+  rewards?: MorphoVaultApiReward[] | null;
+}
+
+interface KatanaEstimatedComponents {
+  katanaAppRewardsAPR?: number | null;
+  fixedRateKatanaRewards?: number | null;
+}
+
+interface KatanaVaultSnapshot {
+  performance?: {
+    oracle?: {
+      netAPR?: number | null;
+    } | null;
+    estimated?: {
+      components?: KatanaEstimatedComponents | null;
+    } | null;
+  } | null;
+}
 
 export function initOnchainClients(config: OnchainSourceConfig): void {
   _sourceConfig = config;
@@ -220,6 +304,48 @@ function isValidNonZeroBytes32(value: string | null): value is `0x${string}` {
   return value !== `0x${"0".repeat(64)}`;
 }
 
+function annualizeGrowthRatio(growthRatio: number, elapsedSeconds: number): bigint | null {
+  if (!Number.isFinite(growthRatio) || growthRatio <= 0 || elapsedSeconds <= 0) return null;
+  try {
+    const apy = Math.pow(growthRatio, SECONDS_PER_YEAR / elapsedSeconds) - 1.0;
+    if (!Number.isFinite(apy)) return null;
+    return BigInt(Math.round(apy * Number(ONE)));
+  } catch {
+    return null;
+  }
+}
+
+function annualizeRawGrowth(
+  currentValue: bigint,
+  oldValue: bigint,
+  elapsedSeconds: number,
+): bigint | null {
+  if (currentValue <= 0n || oldValue <= 0n) return null;
+  try {
+    return annualizeGrowthRatio(
+      Number(currentValue) / Number(oldValue),
+      elapsedSeconds,
+    );
+  } catch {
+    return null;
+  }
+}
+
+function rayAnnualRateToApyRaw(rateRay: bigint): bigint {
+  if (rateRay <= 0n) return 0n;
+
+  const linearAprRaw = rateRay / (RAY / ONE);
+  try {
+    const apr = Number(rateRay) / Number(RAY);
+    const apy = Math.expm1(Math.log1p(apr / SECONDS_PER_YEAR) * SECONDS_PER_YEAR);
+    if (!Number.isFinite(apy)) return linearAprRaw > 0n ? linearAprRaw : 0n;
+    const result = BigInt(Math.round(apy * Number(ONE)));
+    return result > 0n ? result : 0n;
+  } catch {
+    return linearAprRaw > 0n ? linearAprRaw : 0n;
+  }
+}
+
 async function probePendleMarket(
   address: Address,
   chainId: number,
@@ -263,6 +389,30 @@ function parseAddressRef(value: unknown): string | null {
   if (!candidate.startsWith("0x")) return null;
   try {
     return getAddress(candidate);
+  } catch {
+    return null;
+  }
+}
+
+function parseFiniteNumber(value: unknown): number | null {
+  if (typeof value !== "number") return null;
+  return Number.isFinite(value) ? value : null;
+}
+
+function aprFloatToRaw(apr: number): bigint | null {
+  if (!Number.isFinite(apr)) return null;
+  try {
+    return BigInt(Math.round(apr * Number(ONE)));
+  } catch {
+    return null;
+  }
+}
+
+function getAavePoolAddress(chainId: number): string | null {
+  const address = AAVE_POOL_ADDRESSES[chainId];
+  if (!address) return null;
+  try {
+    return getAddress(address);
   } catch {
     return null;
   }
@@ -359,12 +509,20 @@ export async function classifyAddress(
     }
   }
 
-  const leverageRatio = await probeUint(
+  let leverageRatio = await probeUint(
     addr,
     chainId,
-    targetLeverageAbi,
-    "targetLeverageRatio",
+    currentLeverageRatioAbi,
+    "getCurrentLeverageRatio",
   );
+  if (leverageRatio === null) {
+    leverageRatio = await probeUint(
+      addr,
+      chainId,
+      targetLeverageAbi,
+      "targetLeverageRatio",
+    );
+  }
   if (leverageRatio !== null) {
     const marketId = await probeBytes32(addr, chainId, marketIdAbi, "marketId");
     const hasMorphoMarketId = isValidNonZeroBytes32(marketId);
@@ -654,14 +812,12 @@ export async function getStrategyMorpho(strategy: string, chainId: number): Prom
 }
 
 export async function getStrategyLeverageRatio(strategy: string, chainId: number): Promise<bigint | null> {
-  const current = await probeUint(
+  return probeUint(
     getAddress(strategy),
     chainId,
     currentLeverageRatioAbi,
     "getCurrentLeverageRatio",
   );
-  if (current !== null) return current;
-  return probeUint(getAddress(strategy), chainId, targetLeverageAbi, "targetLeverageRatio");
 }
 
 export async function getStrategyPendleMarket(
@@ -678,6 +834,63 @@ export async function getStrategyPendleRouter(
 ): Promise<string | null> {
   const router = await probePendleRouter(getAddress(strategy), chainId);
   return router ?? null;
+}
+
+export async function getStrategyVault(
+  strategy: string,
+  chainId: number,
+): Promise<string | null> {
+  return probeAddress(getAddress(strategy), chainId, strategyVaultAbi, "vault");
+}
+
+async function getPendleRouterStatic(chainId: number): Promise<string | null> {
+  const address = CHAIN_PENDLE_ROUTER_STATIC_ADDRESSES[chainId];
+  if (!address) return null;
+  try {
+    return getAddress(address);
+  } catch {
+    return null;
+  }
+}
+
+async function getAaveReserveContext(
+  aToken: string,
+  chainId: number,
+): Promise<{ pool: string; asset: string } | null> {
+  const client = getViemClient(chainId);
+  if (!client) return null;
+
+  try {
+    const [pool, asset] = await Promise.all([
+      client.readContract({
+        address: getAddress(aToken),
+        abi: aaveReceiptTokenAbi,
+        functionName: "POOL",
+      }),
+      client.readContract({
+        address: getAddress(aToken),
+        abi: aaveReceiptTokenAbi,
+        functionName: "UNDERLYING_ASSET_ADDRESS",
+      }),
+    ]);
+    return { pool: getAddress(pool), asset: getAddress(asset) };
+  } catch {
+    return null;
+  }
+}
+
+async function getAaveAssetContext(
+  asset: string,
+  chainId: number,
+): Promise<{ pool: string; asset: string } | null> {
+  const pool = getAavePoolAddress(chainId);
+  if (!pool) return null;
+
+  try {
+    return { pool, asset: getAddress(asset) };
+  } catch {
+    return null;
+  }
 }
 
 export async function getPendleMarketApyFromApi(
@@ -759,6 +972,266 @@ export async function getPendleMarketApyFromApi(
   return { market: match.market, apyRaw };
 }
 
+function morphoVaultItemTotalApr(item: MorphoVaultApiItem | null | undefined): number | null {
+  if (!item?.state) return null;
+
+  const netApy = parseFiniteNumber(item.state.netApy) ?? 0;
+  if (Number.isFinite(netApy) && netApy !== 0) return netApy;
+  const baseApy = parseFiniteNumber(item.state.netApyExcludingRewards) ?? netApy;
+  const rewards = Array.isArray(item.state.allRewards) ? item.state.allRewards : [];
+  const rewardsApr = rewards.reduce(
+    (sum, reward) => sum + (parseFiniteNumber(reward?.supplyApr) ?? 0),
+    0,
+  );
+  const total = baseApy + rewardsApr;
+  return Number.isFinite(total) ? total : null;
+}
+
+function morphoVaultV2ItemTotalApr(item: MorphoVaultV2ApiItem | null | undefined): number | null {
+  if (!item) return null;
+
+  const netApy = parseFiniteNumber(item.netApy) ?? 0;
+  if (Number.isFinite(netApy) && netApy !== 0) return netApy;
+  const baseApy = parseFiniteNumber(item.netApyExcludingRewards) ?? netApy;
+  const rewards = Array.isArray(item.rewards) ? item.rewards : [];
+  const rewardsApr = rewards.reduce(
+    (sum, reward) => sum + (parseFiniteNumber(reward?.supplyApr) ?? 0),
+    0,
+  );
+  const total = baseApy + rewardsApr;
+  return Number.isFinite(total) ? total : null;
+}
+
+export async function getMorphoVaultAprFromApi(
+  chainId: number,
+  params: {
+    vaultAddress?: string | null;
+    search?: string | null;
+    exactName?: string | null;
+    assetSymbol?: string | null;
+  },
+): Promise<bigint | null> {
+  const vaultAddress = params.vaultAddress ? parseAddressRef(params.vaultAddress) : null;
+  const search = typeof params.search === "string" ? params.search.trim() : "";
+  const exactName = typeof params.exactName === "string" ? params.exactName.trim().toLowerCase() : "";
+  const assetSymbol = typeof params.assetSymbol === "string"
+    ? params.assetSymbol.trim().toLowerCase()
+    : "";
+
+  if (!vaultAddress && !search) return null;
+
+  const cacheKey = [
+    String(chainId),
+    vaultAddress?.toLowerCase() ?? "",
+    search.toLowerCase(),
+    exactName,
+    assetSymbol,
+  ].join(":");
+  const cached = morphoApiCache.get(cacheKey);
+  const now = Date.now();
+  if (cached && now - cached.fetchedAt <= MORPHO_API_CACHE_TTL_MS) {
+    return cached.apr === null ? null : aprFloatToRaw(cached.apr);
+  }
+
+  try {
+    let items: MorphoVaultApiItem[] = [];
+
+    if (vaultAddress) {
+      const queryV1 = `
+        query MorphoVaultByAddress($address: String!, $chainId: Int!) {
+          vaultByAddress(address: $address, chainId: $chainId) {
+            address
+            name
+            symbol
+            asset { symbol }
+            state {
+              netApy
+              netApyExcludingRewards
+              allRewards {
+                supplyApr
+              }
+            }
+          }
+        }
+      `;
+
+      const responseV1 = await fetch(MORPHO_API_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ query: queryV1, variables: { address: vaultAddress, chainId } }),
+      });
+      if (responseV1.ok) {
+        const payload = await responseV1.json() as {
+          data?: { vaultByAddress?: MorphoVaultApiItem | null };
+          errors?: unknown[];
+        };
+        if (!Array.isArray(payload.errors) || payload.errors.length === 0) {
+          if (payload.data?.vaultByAddress) {
+            items = [payload.data.vaultByAddress];
+          }
+        }
+      }
+
+      if (!items.length) {
+        const queryV2 = `
+          query MorphoVaultV2ByAddress($address: String!, $chainId: Int!) {
+            vaultV2ByAddress(address: $address, chainId: $chainId) {
+              address
+              name
+              symbol
+              asset { symbol }
+              netApy
+              netApyExcludingRewards
+              rewards {
+                supplyApr
+              }
+            }
+          }
+        `;
+        const responseV2 = await fetch(MORPHO_API_URL, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ query: queryV2, variables: { address: vaultAddress, chainId } }),
+        });
+        if (!responseV2.ok) return null;
+        const payloadV2 = await responseV2.json() as {
+          data?: { vaultV2ByAddress?: MorphoVaultV2ApiItem | null };
+          errors?: unknown[];
+        };
+        if (Array.isArray(payloadV2.errors) && payloadV2.errors.length > 0) return null;
+        const apr = morphoVaultV2ItemTotalApr(payloadV2.data?.vaultV2ByAddress);
+        morphoApiCache.set(cacheKey, { fetchedAt: now, apr });
+        return apr === null ? null : aprFloatToRaw(apr);
+      }
+    } else {
+      const query = `
+        query MorphoVaultSearch($search: String!) {
+          vaults(first: 20, where: { chainId_in: [${chainId}], search: $search }) {
+            items {
+              address
+              name
+              symbol
+              asset { symbol }
+              state {
+                netApy
+                netApyExcludingRewards
+                allRewards {
+                  supplyApr
+                }
+              }
+            }
+          }
+        }
+      `;
+      const response = await fetch(MORPHO_API_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ query, variables: { search } }),
+      });
+      if (!response.ok) return null;
+      const payload = await response.json() as {
+        data?: { vaults?: { items?: MorphoVaultApiItem[] | null } | null };
+        errors?: unknown[];
+      };
+      if (Array.isArray(payload.errors) && payload.errors.length > 0) return null;
+      items = Array.isArray(payload.data?.vaults?.items) ? payload.data!.vaults!.items! : [];
+    }
+
+    if (!items.length) {
+      morphoApiCache.set(cacheKey, { fetchedAt: now, apr: null });
+      return null;
+    }
+
+    let candidates = items;
+    if (exactName) {
+      const exactMatches = candidates.filter((item) => (item.name ?? "").trim().toLowerCase() === exactName);
+      if (exactMatches.length > 0) candidates = exactMatches;
+    }
+    if (assetSymbol) {
+      const assetMatches = candidates.filter(
+        (item) => (item.asset?.symbol ?? "").trim().toLowerCase() === assetSymbol,
+      );
+      if (assetMatches.length > 0) candidates = assetMatches;
+    }
+
+    candidates = [...candidates].sort((a, b) => {
+      const aprA = morphoVaultItemTotalApr(a) ?? Number.NEGATIVE_INFINITY;
+      const aprB = morphoVaultItemTotalApr(b) ?? Number.NEGATIVE_INFINITY;
+      return aprB - aprA;
+    });
+
+    const apr = morphoVaultItemTotalApr(candidates[0]);
+    morphoApiCache.set(cacheKey, { fetchedAt: now, apr });
+    return apr === null ? null : aprFloatToRaw(apr);
+  } catch {
+    return null;
+  }
+}
+
+function katanaVaultTotalApr(snapshot: KatanaVaultSnapshot | null | undefined): number | null {
+  const oracle = snapshot?.performance?.oracle ?? {};
+  const baseApr = parseFiniteNumber(oracle.netAPR);
+  const rewardsApr = katanaVaultRewardsApr(snapshot);
+  if (baseApr !== null || rewardsApr !== null) {
+    const total = (baseApr ?? 0) + (rewardsApr ?? 0);
+    if (Number.isFinite(total)) return total;
+  }
+  return baseApr;
+}
+
+function katanaVaultRewardsApr(snapshot: KatanaVaultSnapshot | null | undefined): number | null {
+  const components = snapshot?.performance?.estimated?.components ?? {};
+  const appRewards = parseFiniteNumber(components.katanaAppRewardsAPR);
+  const fixedRate = parseFiniteNumber(components.fixedRateKatanaRewards);
+  if (appRewards !== null || fixedRate !== null) {
+    return (appRewards ?? 0) + (fixedRate ?? 0);
+  }
+  return null;
+}
+
+async function getKatanaVaultRecordFromApi(
+  chainId: number,
+  vaultAddress: string,
+): Promise<KatanaVaultSnapshot | null> {
+  let normalizedAddress: string;
+  try {
+    normalizedAddress = getAddress(vaultAddress).toLowerCase();
+  } catch {
+    return null;
+  }
+
+  const cacheKey = `${chainId}:${normalizedAddress}`;
+  const now = Date.now();
+  let cached = katanaApiCache.get(cacheKey);
+
+  if (!cached || now - cached.fetchedAt > KATANA_APR_CACHE_TTL_MS) {
+    try {
+      const response = await fetch(`${KATANA_SNAPSHOT_API_BASE_URL}/${chainId}/${normalizedAddress}`, {
+        method: "GET",
+        headers: { accept: "application/json" },
+      });
+      if (!response.ok) return null;
+
+      const payload = await response.json() as KatanaVaultSnapshot;
+      cached = { fetchedAt: now, payload };
+      katanaApiCache.set(cacheKey, cached);
+    } catch {
+      return null;
+    }
+  }
+
+  return cached.payload ?? null;
+}
+
+export async function getKatanaVaultAprFromApi(
+  chainId: number,
+  vaultAddress: string,
+): Promise<bigint | null> {
+  const record = await getKatanaVaultRecordFromApi(chainId, vaultAddress);
+  const apr = katanaVaultTotalApr(record);
+  return apr === null ? null : aprFloatToRaw(apr);
+}
+
 export function lnImpliedRateToApyRaw(lnImpliedRate: bigint): bigint {
   if (lnImpliedRate <= 0n) return 0n;
   try {
@@ -817,6 +1290,49 @@ export async function getPendleMarketImpliedApy(
   }
 }
 
+async function getPendlePtToAssetRate(
+  market: string,
+  chainId: number,
+  blockNumber?: bigint,
+): Promise<bigint | null> {
+  const client = getViemClient(chainId);
+  if (!client) return null;
+
+  const routerStatic = await getPendleRouterStatic(chainId);
+  if (!routerStatic) return null;
+
+  try {
+    return await client.readContract({
+      address: getAddress(routerStatic),
+      abi: pendleRouterStaticAbi,
+      functionName: "getPtToAssetRate",
+      args: [getAddress(market)],
+      ...(blockNumber !== undefined ? { blockNumber } : {}),
+    });
+  } catch {
+    return null;
+  }
+}
+
+export async function getPendlePtRealizedApy(
+  market: string,
+  chainId: number,
+  windowSeconds: number,
+): Promise<bigint | null> {
+  if (windowSeconds <= 0) return null;
+
+  const bounds = await getHistoricalWindowBounds(chainId, windowSeconds);
+  if (!bounds) return null;
+
+  const [currentRate, oldRate] = await Promise.all([
+    getPendlePtToAssetRate(market, chainId, bounds.latestBlockNumber),
+    getPendlePtToAssetRate(market, chainId, bounds.oldBlockNumber),
+  ]);
+  if (currentRate === null || oldRate === null) return null;
+
+  return annualizeRawGrowth(currentRate, oldRate, bounds.elapsedSeconds);
+}
+
 export async function getMorphoMarketBorrowApy(
   morpho: string,
   marketId: string,
@@ -866,6 +1382,240 @@ export async function getMorphoMarketBorrowApy(
     });
 
     return ratePerSecondToApyRaw(borrowRatePerSecond);
+  } catch {
+    return null;
+  }
+}
+
+async function getMorphoMarketBorrowIndex(
+  morpho: string,
+  marketId: string,
+  chainId: number,
+  blockNumber?: bigint,
+): Promise<bigint | null> {
+  const client = getViemClient(chainId);
+  if (!client) return null;
+
+  try {
+    const market = await client.readContract({
+      address: getAddress(morpho),
+      abi: morphoMarketAbi,
+      functionName: "market",
+      args: [marketId as `0x${string}`],
+      ...(blockNumber !== undefined ? { blockNumber } : {}),
+    });
+
+    const totalBorrowAssets = market[2];
+    const totalBorrowShares = market[3];
+    if (totalBorrowAssets <= 0n || totalBorrowShares <= 0n) return null;
+
+    return (BigInt(totalBorrowAssets) * ONE) / BigInt(totalBorrowShares);
+  } catch {
+    return null;
+  }
+}
+
+export async function getMorphoMarketHistoricalBorrowApy(
+  morpho: string,
+  marketId: string,
+  chainId: number,
+  windowSeconds: number,
+): Promise<bigint | null> {
+  if (windowSeconds <= 0) return null;
+
+  const bounds = await getHistoricalWindowBounds(chainId, windowSeconds);
+  if (!bounds) return null;
+
+  const [currentIndex, oldIndex] = await Promise.all([
+    getMorphoMarketBorrowIndex(morpho, marketId, chainId, bounds.latestBlockNumber),
+    getMorphoMarketBorrowIndex(morpho, marketId, chainId, bounds.oldBlockNumber),
+  ]);
+  if (currentIndex === null || oldIndex === null) return null;
+
+  return annualizeRawGrowth(currentIndex, oldIndex, bounds.elapsedSeconds);
+}
+
+export async function getAaveReserveHistoricalSupplyApy(
+  aToken: string,
+  chainId: number,
+  windowSeconds: number,
+): Promise<bigint | null> {
+  if (windowSeconds <= 0) return null;
+
+  const client = getViemClient(chainId);
+  if (!client) return null;
+
+  const context = await getAaveReserveContext(aToken, chainId);
+  if (!context) return null;
+
+  const bounds = await getHistoricalWindowBounds(chainId, windowSeconds);
+  if (!bounds) return null;
+
+  try {
+    const [currentIndex, oldIndex] = await Promise.all([
+      client.readContract({
+        address: getAddress(context.pool),
+        abi: aavePoolAbi,
+        functionName: "getReserveNormalizedIncome",
+        args: [getAddress(context.asset)],
+        blockNumber: bounds.latestBlockNumber,
+      }),
+      client.readContract({
+        address: getAddress(context.pool),
+        abi: aavePoolAbi,
+        functionName: "getReserveNormalizedIncome",
+        args: [getAddress(context.asset)],
+        blockNumber: bounds.oldBlockNumber,
+      }),
+    ]);
+    return annualizeRawGrowth(currentIndex, oldIndex, bounds.elapsedSeconds);
+  } catch {
+    return null;
+  }
+}
+
+export async function getAaveReserveHistoricalBorrowApy(
+  aToken: string,
+  chainId: number,
+  windowSeconds: number,
+): Promise<bigint | null> {
+  if (windowSeconds <= 0) return null;
+
+  const client = getViemClient(chainId);
+  if (!client) return null;
+
+  const context = await getAaveReserveContext(aToken, chainId);
+  if (!context) return null;
+
+  const bounds = await getHistoricalWindowBounds(chainId, windowSeconds);
+  if (!bounds) return null;
+
+  try {
+    const [currentIndex, oldIndex] = await Promise.all([
+      client.readContract({
+        address: getAddress(context.pool),
+        abi: aavePoolAbi,
+        functionName: "getReserveNormalizedVariableDebt",
+        args: [getAddress(context.asset)],
+        blockNumber: bounds.latestBlockNumber,
+      }),
+      client.readContract({
+        address: getAddress(context.pool),
+        abi: aavePoolAbi,
+        functionName: "getReserveNormalizedVariableDebt",
+        args: [getAddress(context.asset)],
+        blockNumber: bounds.oldBlockNumber,
+      }),
+    ]);
+    return annualizeRawGrowth(currentIndex, oldIndex, bounds.elapsedSeconds);
+  } catch {
+    return null;
+  }
+}
+
+export async function getAaveAssetHistoricalBorrowApy(
+  asset: string,
+  chainId: number,
+  windowSeconds: number,
+): Promise<bigint | null> {
+  if (windowSeconds <= 0) return null;
+
+  const client = getViemClient(chainId);
+  if (!client) return null;
+
+  const context = await getAaveAssetContext(asset, chainId);
+  if (!context) return null;
+
+  const bounds = await getHistoricalWindowBounds(chainId, windowSeconds);
+  if (!bounds) return null;
+
+  try {
+    const [currentIndex, oldIndex] = await Promise.all([
+      client.readContract({
+        address: getAddress(context.pool),
+        abi: aavePoolAbi,
+        functionName: "getReserveNormalizedVariableDebt",
+        args: [getAddress(context.asset)],
+        blockNumber: bounds.latestBlockNumber,
+      }),
+      client.readContract({
+        address: getAddress(context.pool),
+        abi: aavePoolAbi,
+        functionName: "getReserveNormalizedVariableDebt",
+        args: [getAddress(context.asset)],
+        blockNumber: bounds.oldBlockNumber,
+      }),
+    ]);
+    return annualizeRawGrowth(currentIndex, oldIndex, bounds.elapsedSeconds);
+  } catch {
+    return null;
+  }
+}
+
+export async function getAaveReserveCurrentSupplyApy(
+  aToken: string,
+  chainId: number,
+): Promise<bigint | null> {
+  const client = getViemClient(chainId);
+  if (!client) return null;
+
+  const context = await getAaveReserveContext(aToken, chainId);
+  if (!context) return null;
+
+  try {
+    const reserveData = await client.readContract({
+      address: getAddress(context.pool),
+      abi: aavePoolAbi,
+      functionName: "getReserveData",
+      args: [getAddress(context.asset)],
+    });
+    return rayAnnualRateToApyRaw(BigInt(reserveData[2]));
+  } catch {
+    return null;
+  }
+}
+
+export async function getAaveReserveCurrentBorrowApy(
+  aToken: string,
+  chainId: number,
+): Promise<bigint | null> {
+  const client = getViemClient(chainId);
+  if (!client) return null;
+
+  const context = await getAaveReserveContext(aToken, chainId);
+  if (!context) return null;
+
+  try {
+    const reserveData = await client.readContract({
+      address: getAddress(context.pool),
+      abi: aavePoolAbi,
+      functionName: "getReserveData",
+      args: [getAddress(context.asset)],
+    });
+    return rayAnnualRateToApyRaw(BigInt(reserveData[4]));
+  } catch {
+    return null;
+  }
+}
+
+export async function getAaveAssetCurrentBorrowApy(
+  asset: string,
+  chainId: number,
+): Promise<bigint | null> {
+  const client = getViemClient(chainId);
+  if (!client) return null;
+
+  const context = await getAaveAssetContext(asset, chainId);
+  if (!context) return null;
+
+  try {
+    const reserveData = await client.readContract({
+      address: getAddress(context.pool),
+      abi: aavePoolAbi,
+      functionName: "getReserveData",
+      args: [getAddress(context.asset)],
+    });
+    return rayAnnualRateToApyRaw(BigInt(reserveData[4]));
   } catch {
     return null;
   }
@@ -922,6 +1672,49 @@ async function findBlockAtOrBeforeTimestamp(
   return best;
 }
 
+async function getHistoricalWindowBounds(
+  chainId: number,
+  windowSeconds: number,
+): Promise<{
+  latestBlockNumber: bigint;
+  oldBlockNumber: bigint;
+  elapsedSeconds: number;
+} | null> {
+  if (windowSeconds <= 0) return null;
+
+  const client = getViemClient(chainId);
+  if (!client) return null;
+
+  let latestBlockNumber: bigint;
+  try {
+    latestBlockNumber = await client.getBlockNumber();
+  } catch {
+    return null;
+  }
+  if (latestBlockNumber <= 0n) return null;
+
+  const latestBlock = await getBlock(chainId, latestBlockNumber);
+  if (!latestBlock || latestBlock.timestamp <= 0n) return null;
+
+  const targetTs = latestBlock.timestamp - BigInt(windowSeconds);
+  if (targetTs <= 0n) return null;
+
+  const oldBlockNumber = await findBlockAtOrBeforeTimestamp(chainId, targetTs, latestBlockNumber);
+  if (oldBlockNumber === null) return null;
+
+  const oldBlock = await getBlock(chainId, oldBlockNumber);
+  if (!oldBlock) return null;
+
+  const elapsedSeconds = Number(latestBlock.timestamp - oldBlock.timestamp);
+  if (elapsedSeconds <= 0) return null;
+
+  return {
+    latestBlockNumber,
+    oldBlockNumber,
+    elapsedSeconds,
+  };
+}
+
 async function historicalConvertToAssetsAprForWindow(
   vault: string,
   chainId: number,
@@ -930,45 +1723,24 @@ async function historicalConvertToAssetsAprForWindow(
 ): Promise<bigint | null> {
   if (windowSeconds <= 0 || sharesRaw <= 0n) return null;
 
-  const client = getViemClient(chainId);
-  if (!client) return null;
+  const bounds = await getHistoricalWindowBounds(chainId, windowSeconds);
+  if (!bounds) return null;
 
-  let latestBlockNum: bigint;
-  try {
-    latestBlockNum = await client.getBlockNumber();
-  } catch {
-    return null;
-  }
-  if (latestBlockNum <= 0n) return null;
-
-  const latestBlockData = await getBlock(chainId, latestBlockNum);
-  if (!latestBlockData) return null;
-  const latestTs = latestBlockData.timestamp;
-  if (latestTs <= 0n) return null;
-
-  const targetTs = latestTs - BigInt(windowSeconds);
-  if (targetTs <= 0n) return null;
-
-  const oldBlockNum = await findBlockAtOrBeforeTimestamp(chainId, targetTs, latestBlockNum);
-  if (oldBlockNum === null) return null;
-
-  const oldBlockData = await getBlock(chainId, oldBlockNum);
-  if (!oldBlockData) return null;
-  const elapsed = Number(latestTs - oldBlockData.timestamp);
-  if (elapsed <= 0) return null;
-
-  const latestAssets = await getErc4626ConvertToAssets(vault, chainId, sharesRaw, latestBlockNum);
-  const oldAssets = await getErc4626ConvertToAssets(vault, chainId, sharesRaw, oldBlockNum);
+  const latestAssets = await getErc4626ConvertToAssets(
+    vault,
+    chainId,
+    sharesRaw,
+    bounds.latestBlockNumber,
+  );
+  const oldAssets = await getErc4626ConvertToAssets(
+    vault,
+    chainId,
+    sharesRaw,
+    bounds.oldBlockNumber,
+  );
   if (latestAssets === null || oldAssets === null || oldAssets <= 0n) return null;
 
-  try {
-    const growthRatio = Number(latestAssets) / Number(oldAssets);
-    if (growthRatio <= 0) return null;
-    const apy = Math.pow(growthRatio, SECONDS_PER_YEAR / elapsed) - 1.0;
-    return BigInt(Math.round(apy * Number(ONE)));
-  } catch {
-    return null;
-  }
+  return annualizeRawGrowth(latestAssets, oldAssets, bounds.elapsedSeconds);
 }
 
 export async function getHistoricalConvertToAssetsApr(
@@ -977,31 +1749,13 @@ export async function getHistoricalConvertToAssetsApr(
   windowSeconds: number,
   sharesRaw: bigint,
 ): Promise<bigint | null> {
-  if (windowSeconds <= 0 || sharesRaw <= 0n) return null;
-
-  const fallbackWindows = [
-    windowSeconds,
-    Math.min(windowSeconds, 86_400),
-    Math.min(windowSeconds, 21_600),
-    Math.min(windowSeconds, 3_600),
-    Math.min(windowSeconds, 900),
-  ];
-  const deduped: number[] = [];
-  for (const w of fallbackWindows) {
-    if (w > 0 && !deduped.includes(w)) deduped.push(w);
-  }
-
-  for (const w of deduped) {
-    const apr = await historicalConvertToAssetsAprForWindow(vault, chainId, w, sharesRaw);
-    if (apr !== null) return apr;
-  }
-  return null;
+  return historicalConvertToAssetsAprForWindow(vault, chainId, windowSeconds, sharesRaw);
 }
 
 export async function getOracleGrowthApr(
   oracleAddress: string,
   chainId: number,
-  windowSeconds: number = 7 * 24 * 60 * 60,
+  windowSeconds: number = DEFAULT_HISTORICAL_WINDOW_SECONDS,
 ): Promise<bigint | null> {
   const client = getViemClient(chainId);
   if (!client) return null;

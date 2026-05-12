@@ -1,5 +1,6 @@
 import type { VaultConfig, StrategyConfig } from "./config";
 import type { AprComponent } from "./models";
+import type { FeeConfig } from "./apr-engine";
 import { YvUsdAprEngine, aprToFloat } from "./apr-engine";
 import { getErc4626Asset } from "./onchain";
 
@@ -9,25 +10,15 @@ type CalculatorFn = (
   engine: YvUsdAprEngine,
 ) => Promise<AprComponent[]>;
 
-async function calculateYvusdBase(
-  vault: VaultConfig,
-  strategy: StrategyConfig,
-  engine: YvUsdAprEngine,
-): Promise<AprComponent[]> {
-  const lockedVault = String(strategy.params?.locked_vault ?? "") || null;
-  const delta = Number(strategy.params?.delta ?? 0) || 0;
-
-  const [grossApr, netApr, feeConfig, strategyMeta] = await engine.getCustomExpectedApr(
-    vault.address,
-    lockedVault,
-    vault.chain_id,
-    delta,
-  );
-
-  if (netApr === null) return [];
-
+function buildAprMeta(
+  strategyId: string,
+  grossApr: bigint | null,
+  netApr: bigint,
+  feeConfig: FeeConfig | null,
+  strategyMeta: Record<string, unknown>[],
+): Record<string, unknown> {
   const meta: Record<string, unknown> = {
-    strategy_id: strategy.id,
+    strategy_id: strategyId,
     apr_decimals: 18,
     gross_apr_raw: String(grossApr ?? 0n),
     net_apr_raw: String(netApr),
@@ -38,16 +29,55 @@ async function calculateYvusdBase(
     meta.performance_fee_bps = feeConfig.performanceFee;
     meta.locker_bonus_bps = feeConfig.lockerBonus;
   }
+  return meta;
+}
 
-  return [
-    {
-      label: "net_apr",
-      apr: aprToFloat(netApr),
-      apy: 0,
-      source: "onchain",
-      meta,
-    },
-  ];
+async function buildHeadlineNetAprComponent(
+  strategyId: string,
+  label: string,
+  vaultAddress: string,
+  lockedVaultAddress: string | null,
+  chainId: number,
+  delta: number,
+  engine: YvUsdAprEngine,
+): Promise<AprComponent | null> {
+  const [grossApr, netApr, feeConfig, strategyMeta] = await engine.getCustomExpectedApr(
+    vaultAddress,
+    lockedVaultAddress,
+    chainId,
+    delta,
+  );
+
+  if (netApr === null) return null;
+
+  return {
+    label,
+    apr: aprToFloat(netApr),
+    apy: 0,
+    source: "onchain",
+    meta: buildAprMeta(strategyId, grossApr, netApr, feeConfig, strategyMeta),
+  };
+}
+
+async function calculateYvusdBase(
+  vault: VaultConfig,
+  strategy: StrategyConfig,
+  engine: YvUsdAprEngine,
+): Promise<AprComponent[]> {
+  const lockedVault = String(strategy.params?.locked_vault ?? "") || null;
+  const delta = Number(strategy.params?.delta ?? 0) || 0;
+
+  const component = await buildHeadlineNetAprComponent(
+    strategy.id,
+    "net_apr",
+    vault.address,
+    lockedVault,
+    vault.chain_id,
+    delta,
+    engine,
+  );
+
+  return component ? [component] : [];
 }
 
 async function calculateLockedYvusd(
@@ -63,11 +93,14 @@ async function calculateLockedYvusd(
   }
   if (!baseVault) return [];
 
-  const [grossApr, netApr, feeConfig, strategyMeta] = await engine.getCustomExpectedApr(
+  const baseNetApr = await buildHeadlineNetAprComponent(
+    strategy.id,
+    "base_net_apr",
     baseVault,
     vault.address,
     vault.chain_id,
-    0,
+    delta,
+    engine,
   );
   const bonusApr = await engine.getLockedExpectedApr(
     baseVault,
@@ -76,36 +109,33 @@ async function calculateLockedYvusd(
     delta,
   );
 
-  const meta: Record<string, unknown> = {
+  const bonusMeta: Record<string, unknown> = {
     strategy_id: strategy.id,
     apr_decimals: 18,
-    gross_apr_raw: String(grossApr ?? 0n),
-    net_apr_raw: String(netApr ?? 0n),
     bonus_apr_raw: String(bonusApr ?? 0n),
-    strategies: strategyMeta,
   };
-  if (feeConfig) {
-    meta.management_fee_bps = feeConfig.managementFee;
-    meta.performance_fee_bps = feeConfig.performanceFee;
-    meta.locker_bonus_bps = feeConfig.lockerBonus;
+  if (baseNetApr?.meta) {
+    for (const key of [
+      "gross_apr_raw",
+      "net_apr_raw",
+      "management_fee_bps",
+      "performance_fee_bps",
+      "locker_bonus_bps",
+    ]) {
+      if (key in baseNetApr.meta) {
+        bonusMeta[key] = baseNetApr.meta[key];
+      }
+    }
   }
 
   const components: AprComponent[] = [];
-  if (netApr !== null) {
-    components.push({
-      label: "base_net_apr",
-      apr: aprToFloat(netApr),
-      apy: 0,
-      source: "onchain",
-      meta,
-    });
-  }
+  if (baseNetApr) components.push(baseNetApr);
   components.push({
     label: "locker_bonus_apr",
     apr: aprToFloat(bonusApr),
     apy: 0,
     source: "onchain",
-    meta,
+    meta: bonusMeta,
   });
   return components;
 }

@@ -10,7 +10,7 @@
   "dependencies": {
     "@envio-dev/hypersync-client": "1.0.0",
     "ioredis": "5.9.3",
-    "next": "15.3.8",
+    "next": "15.5.18",
     "react": "19.2.4",
     "react-dom": "19.2.4",
     "viem": "2.45.3",

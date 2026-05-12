@@ -1,4 +1,7 @@
-import type { StrategyCacheConfig } from "./config";
+import {
+  DEFAULT_HISTORICAL_WINDOW_SECONDS,
+  type StrategyCacheConfig,
+} from "./config";
 import { getAddress } from "viem";
 import {
   ONE,
@@ -12,9 +15,19 @@ import {
   getStrategyLeverageRatio,
   getStrategyPendleMarket,
   getStrategyPendleRouter,
+  getPendlePtRealizedApy,
   getPendleMarketImpliedApy,
   getPendleMarketApyFromApi,
+  getMorphoVaultAprFromApi,
+  getAaveReserveCurrentBorrowApy,
+  getAaveAssetCurrentBorrowApy,
+  getAaveReserveCurrentSupplyApy,
+  getAaveReserveHistoricalBorrowApy,
+  getAaveAssetHistoricalBorrowApy,
+  getAaveReserveHistoricalSupplyApy,
+  getKatanaVaultAprFromApi,
   getMorphoMarketBorrowApy,
+  getMorphoMarketHistoricalBorrowApy,
   fetchVaultAprData,
 } from "./onchain";
 import {
@@ -37,8 +50,15 @@ const OFFCHAIN_TYPES = new Set([
 ]);
 
 const MORPHO_LOOPER_TYPES = new Set(["morpho", "morpho-looper"]);
-const MORPHO_STRATEGY_TYPES = new Set(["morpho-looper", "pt-morpho-looper"]);
-const DEFAULT_HISTORICAL_WINDOW_SECONDS = 7 * 24 * 60 * 60;
+const LOOPER_STRATEGY_TYPES = new Set([
+  "looper",
+  "morpho-looper",
+  "aave-looper",
+  "pt-looper",
+  "pt-morpho-looper",
+  "pt-aave-looper",
+]);
+const AAVE_STRATEGY_TYPES = new Set(["aave-looper", "pt-aave-looper"]);
 const CHAIN_MORPHO_ADDRESSES: Record<number, string> = {
   1: "0xBBBBBbbBBb9cC5e90e3b3Af64bdAF62C37EEFFCb",
   137: "0x1bF0c2541F820E775182832f06c0B7Fc27A25f67",
@@ -107,6 +127,38 @@ export class YvUsdAprEngine {
 
   private _cacheKey(vault: string, locked: string, chainId: number, delta: number): string {
     return `${vault.toLowerCase()}:${locked.toLowerCase()}:${chainId}:${delta}`;
+  }
+
+  private _resolveRemoteChainId(
+    entry: StrategyEntry,
+    cfg?: Record<string, unknown>,
+    fallbackChainId?: number,
+  ): number | null {
+    const raw = cfg?.chain_id ?? cfg?.remote_chain_id ?? entry.meta.remote_chain_id;
+    const parsed = raw === null || raw === undefined ? null : Number(raw);
+    if (parsed !== null && Number.isFinite(parsed) && parsed > 0) return parsed;
+    return fallbackChainId ?? null;
+  }
+
+  private _resolveRemoteOracleAddress(
+    entry: StrategyEntry,
+    cfg?: Record<string, unknown>,
+  ): string | null {
+    const remoteVault = String(
+      cfg?.vault
+      ?? cfg?.remote_vault
+      ?? entry.meta.remote_vault
+      ?? "",
+    ).trim();
+    if (remoteVault) return remoteVault;
+
+    const remoteCounterpart = String(
+      cfg?.strategy
+      ?? cfg?.remote_counterpart
+      ?? entry.meta.remote_counterpart
+      ?? "",
+    ).trim();
+    return remoteCounterpart || null;
   }
 
   async getCustomExpectedApr(
@@ -284,37 +336,34 @@ export class YvUsdAprEngine {
     chainId: number,
   ): Promise<bigint | null> {
     const strategyType = String(entry.meta.type ?? "").toLowerCase().replace(/_/g, "-");
+    const preferOffchain = entry.apr_source === "offchain";
 
-    if (OFFCHAIN_TYPES.has(strategyType)) {
-      const offchainApr = await this._getOffchainStrategyApr(entry, chainId);
+    if (preferOffchain || OFFCHAIN_TYPES.has(strategyType)) {
+      const offchainApr = await this._getOffchainStrategyApr(entry, chainId, debtChange);
       if (offchainApr !== null && offchainApr !== 0n) return offchainApr;
     }
 
     if (strategyType === "cross-chain") {
       const remoteVault = String(entry.meta.remote_vault ?? "").trim();
-      let remoteChainId: number | null = null;
-      try {
-        const raw = entry.meta.remote_chain_id;
-        remoteChainId = raw !== null && raw !== undefined ? Number(raw) : null;
-      } catch {
-        remoteChainId = null;
-      }
+      const remoteCounterpart = String(entry.meta.remote_counterpart ?? "").trim();
+      const remoteChainId = this._resolveRemoteChainId(entry);
 
-      if (remoteVault) {
+      if (remoteCounterpart) {
         const remoteMeta = (entry.meta.remote_meta ?? {}) as Record<string, unknown>;
         let remoteType = String(
           entry.meta.remote_vault_type ?? (remoteMeta as Record<string, unknown>).type ?? "",
         ).toLowerCase().replace(/_/g, "-");
 
-        const remoteCfg = getStrategyConfig(remoteVault, this._cacheConfig);
+        const remoteCfg = getStrategyConfig(remoteCounterpart, this._cacheConfig);
         const remoteEntry: StrategyEntry = {
-          address: remoteVault,
+          address: remoteCounterpart,
           active: true,
           apr_source: String(remoteCfg.apr_source ?? "onchain").toLowerCase(),
           offchain: { ...(remoteCfg.offchain ?? {}) },
           meta: {
             ...(remoteCfg.meta ?? {}),
             ...remoteMeta,
+            ...(remoteVault ? { remote_vault: remoteVault } : {}),
             ...(remoteType ? { type: remoteType } : {}),
           },
           points: Boolean(remoteCfg.points ?? false),
@@ -325,13 +374,14 @@ export class YvUsdAprEngine {
           const offchainApr = await this._getOffchainStrategyApr(
             remoteEntry,
             remoteChainId ?? chainId,
+            debtChange,
           );
           if (offchainApr !== null && offchainApr !== 0n) return offchainApr;
         }
 
         if (remoteChainId) {
           const remoteApr = await getStrategyApr(
-            remoteVault,
+            this._resolveRemoteOracleAddress(entry) ?? remoteCounterpart,
             debtChange,
             remoteChainId,
           );
@@ -340,24 +390,20 @@ export class YvUsdAprEngine {
       }
     }
 
-    if (entry.apr_source === "offchain") {
-      const offchainApr = await this._getOffchainStrategyApr(entry, chainId);
-      if (offchainApr !== null && offchainApr !== 0n) return offchainApr;
-    }
-
     return getStrategyApr(entry.address, debtChange, chainId);
   }
 
   private async _getOffchainStrategyApr(
     entry: StrategyEntry,
     chainId: number,
+    debtChange: bigint = 0n,
   ): Promise<bigint | null> {
     const cfg = { ...(entry.offchain ?? {}) };
     let mode = String(cfg.type ?? "").trim().toLowerCase().replace(/_/g, "-");
     const strategyType = String(entry.meta.type ?? "").trim().toLowerCase().replace(/_/g, "-");
 
-    if (!mode && MORPHO_STRATEGY_TYPES.has(strategyType)) {
-      mode = "morpho-looper";
+    if (!mode && LOOPER_STRATEGY_TYPES.has(strategyType)) {
+      mode = strategyType;
     }
     if (!mode && strategyType === "pt") {
       mode = "pt-estimated";
@@ -373,15 +419,49 @@ export class YvUsdAprEngine {
     if (mode === "oracle-growth") {
       return this._getOracleGrowthOffchainApr(entry, chainId, cfg);
     }
+    if (mode === "morpho-api") {
+      return this._getMorphoApiApr(chainId, cfg);
+    }
+    if (mode === "katana-api") {
+      return this._getKatanaApiApr(entry, chainId, cfg);
+    }
     if (mode === "pt-estimated" || mode === "pt") {
       return this._getPtEstimatedOffchainApr(entry, chainId, cfg);
     }
 
-    if (MORPHO_LOOPER_TYPES.has(mode)) {
-      return this._getMorphoLooperOffchainApr(entry, chainId, cfg);
+    if (mode === "looper" || LOOPER_STRATEGY_TYPES.has(mode) || MORPHO_LOOPER_TYPES.has(mode)) {
+      return this._getLooperOffchainApr(entry, chainId, cfg);
     }
 
     return null;
+  }
+
+  private async _getMorphoApiApr(
+    chainId: number,
+    cfg: Record<string, unknown>,
+  ): Promise<bigint | null> {
+    const vaultAddress = String(cfg.vault ?? cfg.address ?? "").trim() || null;
+    const search = String(cfg.search ?? "").trim() || null;
+    const exactName = String(cfg.exact_name ?? cfg.exactName ?? "").trim() || null;
+    const assetSymbol = String(cfg.asset_symbol ?? cfg.assetSymbol ?? "").trim() || null;
+
+    return getMorphoVaultAprFromApi(chainId, {
+      vaultAddress,
+      search,
+      exactName,
+      assetSymbol,
+    });
+  }
+
+  private async _getKatanaApiApr(
+    entry: StrategyEntry,
+    chainId: number,
+    cfg: Record<string, unknown>,
+  ): Promise<bigint | null> {
+    const vaultAddress = String(cfg.vault ?? cfg.remote_vault ?? entry.meta.remote_vault ?? "").trim();
+    const remoteChainId = this._resolveRemoteChainId(entry, cfg, chainId);
+    if (!vaultAddress) return null;
+    return getKatanaVaultAprFromApi(remoteChainId ?? chainId, vaultAddress);
   }
 
   private async _getPtEstimatedOffchainApr(
@@ -391,15 +471,7 @@ export class YvUsdAprEngine {
   ): Promise<bigint | null> {
     const ptToken = String(cfg.pt ?? cfg.pt_token ?? entry.meta.pt ?? "").trim();
     let apiApyRaw: bigint | null = null;
-
-    let pendleRouter = String(cfg.pendle_router ?? entry.meta.pendle_router ?? "").trim();
-    if (!pendleRouter) {
-      pendleRouter = (await getStrategyPendleRouter(entry.address, chainId)) ?? "";
-    }
-    if (!pendleRouter && ptToken) {
-      pendleRouter = (await getStrategyPendleRouter(ptToken, chainId)) ?? "";
-    }
-    if (!pendleRouter) return null;
+    const windowSeconds = this._resolveWindowSeconds(cfg);
 
     let pendleMarket = String(cfg.market ?? entry.meta.market ?? "").trim();
     if (!pendleMarket) {
@@ -419,12 +491,37 @@ export class YvUsdAprEngine {
       }
     }
 
+    if (pendleMarket) {
+      const realizedApy = await getPendlePtRealizedApy(
+        pendleMarket,
+        chainId,
+        windowSeconds,
+      );
+      if (realizedApy !== null) return realizedApy;
+    }
+
+    let pendleRouter = String(cfg.pendle_router ?? entry.meta.pendle_router ?? "").trim();
+    if (!pendleRouter) {
+      pendleRouter = (await getStrategyPendleRouter(entry.address, chainId)) ?? "";
+    }
+    if (!pendleRouter && ptToken) {
+      pendleRouter = (await getStrategyPendleRouter(ptToken, chainId)) ?? "";
+    }
+
     if (pendleMarket && pendleRouter) {
       const onchainApy = await getPendleMarketImpliedApy(pendleMarket, pendleRouter, chainId);
       if (onchainApy !== null) return onchainApy;
     }
 
     return apiApyRaw;
+  }
+
+  private _resolveWindowSeconds(cfg: Record<string, unknown>): number {
+    let windowSeconds = parseIntValue(cfg.window_seconds);
+    if (windowSeconds === null || windowSeconds <= 0n) {
+      windowSeconds = BigInt(DEFAULT_HISTORICAL_WINDOW_SECONDS);
+    }
+    return Number(windowSeconds);
   }
 
   private async _getHistoricalOffchainApr(
@@ -435,17 +532,14 @@ export class YvUsdAprEngine {
     const address = String(cfg.address ?? entry.address ?? "").trim();
     if (!address) return null;
 
-    let windowSeconds = parseIntValue(cfg.window_seconds);
-    if (windowSeconds === null || windowSeconds <= 0n) {
-      windowSeconds = BigInt(DEFAULT_HISTORICAL_WINDOW_SECONDS);
-    }
+    const windowSeconds = this._resolveWindowSeconds(cfg);
 
     let sharesRaw = parseIntValue(cfg.shares_raw);
     if (sharesRaw === null || sharesRaw <= 0n) {
       sharesRaw = ONE;
     }
 
-    return getHistoricalConvertToAssetsApr(address, chainId, Number(windowSeconds), sharesRaw);
+    return getHistoricalConvertToAssetsApr(address, chainId, windowSeconds, sharesRaw);
   }
 
   private async _getOracleGrowthOffchainApr(
@@ -456,32 +550,31 @@ export class YvUsdAprEngine {
     const oracleAddress = String(cfg.oracle ?? "").trim();
     if (!oracleAddress) return null;
 
-    let windowSeconds = parseIntValue(cfg.window_seconds);
-    if (windowSeconds === null || windowSeconds <= 0n) {
-      windowSeconds = BigInt(DEFAULT_HISTORICAL_WINDOW_SECONDS);
-    }
+    const windowSeconds = this._resolveWindowSeconds(cfg);
 
-    const apr = await getOracleGrowthApr(oracleAddress, chainId, Number(windowSeconds));
+    const apr = await getOracleGrowthApr(oracleAddress, chainId, windowSeconds);
     if (apr !== null) return apr;
 
     // Fallback to static APR if provided and no history yet
     return parseAprValue(cfg, "fallback_apr_raw", "fallback_apr");
   }
 
-  private async _getMorphoLooperOffchainApr(
+  private async _getLooperOffchainApr(
     entry: StrategyEntry,
     chainId: number,
     cfg: Record<string, unknown>,
   ): Promise<bigint | null> {
+    const windowSeconds = this._resolveWindowSeconds(cfg);
+
     let collateralApr = parseAprValue(cfg, "collateral_apr_raw", "collateral_apr");
     if (collateralApr === null) {
-      collateralApr = await this._getCollateralVaultApr(entry, chainId);
+      collateralApr = await this._getCollateralAssetApr(entry, chainId, windowSeconds, cfg);
     }
     if (collateralApr === null) return null;
 
     let borrowApy = parseAprValue(cfg, "borrow_apy_raw", "borrow_apy");
     if (borrowApy === null) {
-      borrowApy = await this._getMorphoBorrowApy(entry, chainId, cfg);
+      borrowApy = await this._getLooperBorrowApy(entry, chainId, cfg, windowSeconds);
     }
     if (borrowApy === null) return null;
 
@@ -496,55 +589,155 @@ export class YvUsdAprEngine {
     return supplyComponent - borrowComponent;
   }
 
-  private async _getCollateralVaultApr(
+  private async _getCollateralAssetApr(
     entry: StrategyEntry,
     chainId: number,
+    windowSeconds: number,
+    cfg: Record<string, unknown>,
   ): Promise<bigint | null> {
     const meta = entry.meta ?? {};
+    const strategyType = String(meta.type ?? "").trim().toLowerCase().replace(/_/g, "-");
     const collateral = meta.collateral as { address?: string } | undefined;
-    if (!collateral || typeof collateral !== "object") return null;
+    const collateralAddress = String(
+      cfg.collateral_address
+      ?? cfg.collateralAddress
+      ?? collateral?.address
+      ?? "",
+    ).trim();
+    if (!collateralAddress) return null;
 
-    const collateralVault = String(collateral.address ?? "").trim();
-    if (!collateralVault) return null;
+    const overridden = await this._getAddressOverrideApr(collateralAddress, chainId, windowSeconds);
+    if (overridden !== null) return overridden;
 
-    const hardcoded = await this._getAddressOverrideApr(collateralVault, chainId);
-    if (hardcoded !== null) return hardcoded;
+    if (strategyType.startsWith("pt")) {
+      const collateralMarket = String(meta.market ?? "").trim();
+      const collateralRouter = String(meta.pendle_router ?? "").trim();
+      const syntheticPtEntry: StrategyEntry = {
+        address: collateralAddress,
+        active: true,
+        apr_source: "offchain",
+        offchain: {
+          type: "pt-estimated",
+          window_seconds: windowSeconds,
+          pt: collateralAddress,
+          ...(collateralMarket ? { market: collateralMarket } : {}),
+          ...(collateralRouter ? { pendle_router: collateralRouter } : {}),
+        },
+        meta: {
+          type: "pt",
+          pt: collateralAddress,
+          ...(collateralMarket ? { market: collateralMarket } : {}),
+          ...(collateralRouter ? { pendle_router: collateralRouter } : {}),
+        },
+        points: false,
+      };
+      const ptApr = await this._getPtEstimatedOffchainApr(
+        syntheticPtEntry,
+        chainId,
+        syntheticPtEntry.offchain,
+      );
+      if (ptApr !== null) return ptApr;
+    }
 
-    const [, netApr] = await this.getCustomExpectedApr(collateralVault, null, chainId, 0);
+    const aaveSupplyApy = await getAaveReserveHistoricalSupplyApy(
+      collateralAddress,
+      chainId,
+      windowSeconds,
+    );
+    if (aaveSupplyApy !== null) return aaveSupplyApy;
+
+    const aaveSpotSupplyApy = await getAaveReserveCurrentSupplyApy(collateralAddress, chainId);
+    if (aaveSpotSupplyApy !== null) return aaveSpotSupplyApy;
+
+    const historicalApr = await getHistoricalConvertToAssetsApr(
+      collateralAddress,
+      chainId,
+      windowSeconds,
+      ONE,
+    );
+    if (historicalApr !== null) return historicalApr;
+
+    const [, netApr] = await this.getCustomExpectedApr(collateralAddress, null, chainId, 0);
     return netApr;
   }
 
   private async _getAddressOverrideApr(
     address: string,
     chainId: number,
+    windowSeconds?: number,
   ): Promise<bigint | null> {
     const cfg = getStrategyConfig(address, this._cacheConfig);
     if (cfg.apr_source !== "offchain" || !cfg.offchain || !Object.keys(cfg.offchain).length) {
       return null;
     }
 
-    const mode = String((cfg.offchain as Record<string, unknown>).type ?? "")
+    const offchain = { ...(cfg.offchain as Record<string, unknown>) };
+    const mode = String(offchain.type ?? "")
       .trim()
       .toLowerCase()
       .replace(/_/g, "-");
-    if (MORPHO_LOOPER_TYPES.has(mode)) return null;
+    if (mode === "looper" || LOOPER_STRATEGY_TYPES.has(mode) || MORPHO_LOOPER_TYPES.has(mode)) {
+      return null;
+    }
+
+    if (
+      windowSeconds !== undefined &&
+      windowSeconds > 0 &&
+      offchain.window_seconds === undefined &&
+      (mode === "historical" || mode === "oracle-growth" || mode === "pt" || mode === "pt-estimated")
+    ) {
+      offchain.window_seconds = windowSeconds;
+    }
 
     const syntheticEntry: StrategyEntry = {
       address,
       active: true,
       apr_source: "offchain",
-      offchain: { ...cfg.offchain },
+      offchain,
       meta: { ...(cfg.meta ?? {}) },
       points: Boolean(cfg.points),
     };
     return this._getOffchainStrategyApr(syntheticEntry, chainId);
   }
 
-  private async _getMorphoBorrowApy(
+  private async _getLooperBorrowApy(
     entry: StrategyEntry,
     chainId: number,
     cfg: Record<string, unknown>,
+    windowSeconds: number,
   ): Promise<bigint | null> {
+    const strategyType = String(entry.meta.type ?? "").trim().toLowerCase().replace(/_/g, "-");
+    const aToken = String(
+      cfg.a_token ?? cfg.atoken ?? cfg.aToken ?? entry.meta.aToken ?? "",
+    ).trim();
+    const borrowAsset = String(
+      cfg.borrow_asset ?? cfg.borrowAsset ?? "",
+    ).trim();
+
+    if (AAVE_STRATEGY_TYPES.has(strategyType) || aToken || borrowAsset) {
+      if (aToken) {
+        const historicalBorrow = await getAaveReserveHistoricalBorrowApy(
+          aToken,
+          chainId,
+          windowSeconds,
+        );
+        if (historicalBorrow !== null) return historicalBorrow;
+
+        return getAaveReserveCurrentBorrowApy(aToken, chainId);
+      }
+      if (borrowAsset) {
+        const historicalBorrow = await getAaveAssetHistoricalBorrowApy(
+          borrowAsset,
+          chainId,
+          windowSeconds,
+        );
+        if (historicalBorrow !== null) return historicalBorrow;
+
+        return getAaveAssetCurrentBorrowApy(borrowAsset, chainId);
+      }
+      return null;
+    }
+
     let marketId = String(cfg.market_id ?? entry.meta.market_id ?? "").trim();
     let morpho = String(cfg.morpho ?? entry.meta.morpho ?? "").trim();
 
@@ -559,6 +752,14 @@ export class YvUsdAprEngine {
     }
     if (!marketId || !morpho) return null;
 
+    const historicalBorrow = await getMorphoMarketHistoricalBorrowApy(
+      morpho,
+      marketId,
+      chainId,
+      windowSeconds,
+    );
+    if (historicalBorrow !== null) return historicalBorrow;
+
     return getMorphoMarketBorrowApy(morpho, marketId, chainId);
   }
 
@@ -569,6 +770,12 @@ export class YvUsdAprEngine {
   ): Promise<bigint | null> {
     const manual = parseIntValue(cfg.leverage_ratio_raw);
     if (manual !== null) return manual;
+    const overrideAddress = String(
+      cfg.leverage_ratio_address ?? cfg.leverageRatioAddress ?? "",
+    ).trim();
+    if (overrideAddress) {
+      return getStrategyLeverageRatio(overrideAddress, chainId);
+    }
     return getStrategyLeverageRatio(entry.address, chainId);
   }
 
