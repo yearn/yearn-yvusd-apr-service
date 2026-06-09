@@ -6,7 +6,7 @@ import {
   type Address,
   getAddress,
 } from "viem";
-import { mainnet, arbitrum, type Chain } from "viem/chains";
+import { mainnet, arbitrum, base, type Chain } from "viem/chains";
 import {
   DEFAULT_HISTORICAL_WINDOW_SECONDS,
   type OnchainSourceConfig,
@@ -20,6 +20,7 @@ export const SECONDS_PER_YEAR = 31_536_000;
 const chainDefs: Record<number, Chain> = {
   1: mainnet,
   42161: arbitrum,
+  8453: base,
 };
 
 const nameAbi = parseAbi(["function name() view returns (string)"]);

@@ -16,6 +16,7 @@ Edit `.env.local` with your values:
 ```
 ETH_RPC_URL=https://eth.llamarpc.com
 ARB_RPC_URL=https://arb1.arbitrum.io/rpc
+BASE_RPC_URL=https://mainnet.base.org
 KAT_RPC_URL=
 REDIS_URL=redis://localhost:6379
 HYPERSYNC_API_TOKEN=

@@ -15,6 +15,7 @@ import {
   getStrategyLeverageRatio,
   getStrategyPendleMarket,
   getStrategyPendleRouter,
+  getStrategyVault,
   getPendlePtRealizedApy,
   getPendleMarketImpliedApy,
   getPendleMarketApyFromApi,
@@ -38,6 +39,7 @@ import {
 
 const MAX_BPS = 10_000;
 const BPS_TO_APR = 10n ** 14n;
+const ZERO_APR_FALLBACK_WINDOW_SECONDS = 7 * 24 * 60 * 60;
 
 const OFFCHAIN_TYPES = new Set([
   "looper",
@@ -159,6 +161,22 @@ export class YvUsdAprEngine {
       ?? "",
     ).trim();
     return remoteCounterpart || null;
+  }
+
+  private async _resolveCrossChainRemoteVault(
+    entry: StrategyEntry,
+    chainId: number,
+  ): Promise<string | null> {
+    const remoteVault = String(entry.meta.remote_vault ?? "").trim();
+    if (remoteVault) return remoteVault;
+
+    const remoteCounterpart = String(entry.meta.remote_counterpart ?? "").trim();
+    if (!remoteCounterpart) return null;
+
+    const remoteChainId = this._resolveRemoteChainId(entry, undefined, chainId);
+    if (!remoteChainId) return null;
+
+    return getStrategyVault(remoteCounterpart, remoteChainId);
   }
 
   async getCustomExpectedApr(
@@ -335,6 +353,20 @@ export class YvUsdAprEngine {
     debtChange: bigint,
     chainId: number,
   ): Promise<bigint | null> {
+    const primaryApr = await this._getPrimaryStrategyApr(entry, debtChange, chainId);
+    if (primaryApr !== null && primaryApr !== 0n) return primaryApr;
+
+    const fallbackApr = await this._getZeroAprHistoricalFallback(entry, chainId);
+    if (fallbackApr !== null && fallbackApr !== 0n) return fallbackApr;
+
+    return 0n;
+  }
+
+  private async _getPrimaryStrategyApr(
+    entry: StrategyEntry,
+    debtChange: bigint,
+    chainId: number,
+  ): Promise<bigint | null> {
     const strategyType = String(entry.meta.type ?? "").toLowerCase().replace(/_/g, "-");
     const preferOffchain = entry.apr_source === "offchain";
 
@@ -355,8 +387,12 @@ export class YvUsdAprEngine {
         ).toLowerCase().replace(/_/g, "-");
 
         const remoteCfg = getStrategyConfig(remoteCounterpart, this._cacheConfig);
+        const remotePreferOffchain = OFFCHAIN_TYPES.has(remoteType);
+        const remoteEntryAddress = remotePreferOffchain && remoteVault
+          ? remoteVault
+          : remoteCounterpart;
         const remoteEntry: StrategyEntry = {
-          address: remoteCounterpart,
+          address: remoteEntryAddress,
           active: true,
           apr_source: String(remoteCfg.apr_source ?? "onchain").toLowerCase(),
           offchain: { ...(remoteCfg.offchain ?? {}) },
@@ -364,12 +400,12 @@ export class YvUsdAprEngine {
             ...(remoteCfg.meta ?? {}),
             ...remoteMeta,
             ...(remoteVault ? { remote_vault: remoteVault } : {}),
+            ...(remoteCounterpart ? { remote_counterpart: remoteCounterpart } : {}),
             ...(remoteType ? { type: remoteType } : {}),
           },
           points: Boolean(remoteCfg.points ?? false),
         };
 
-        const remotePreferOffchain = OFFCHAIN_TYPES.has(remoteType);
         if (remotePreferOffchain || remoteEntry.apr_source === "offchain") {
           const offchainApr = await this._getOffchainStrategyApr(
             remoteEntry,
@@ -380,8 +416,12 @@ export class YvUsdAprEngine {
         }
 
         if (remoteChainId) {
+          const remoteOracleAddress = await this._resolveCrossChainRemoteVault(
+            entry,
+            remoteChainId,
+          );
           const remoteApr = await getStrategyApr(
-            this._resolveRemoteOracleAddress(entry) ?? remoteCounterpart,
+            remoteOracleAddress ?? this._resolveRemoteOracleAddress(entry) ?? remoteCounterpart,
             debtChange,
             remoteChainId,
           );
@@ -391,6 +431,28 @@ export class YvUsdAprEngine {
     }
 
     return getStrategyApr(entry.address, debtChange, chainId);
+  }
+
+  private async _getZeroAprHistoricalFallback(
+    entry: StrategyEntry,
+    chainId: number,
+  ): Promise<bigint | null> {
+    const strategyType = String(entry.meta.type ?? "").trim().toLowerCase().replace(/_/g, "-");
+    const fallbackChainId = strategyType === "cross-chain"
+      ? this._resolveRemoteChainId(entry, undefined, chainId) ?? chainId
+      : chainId;
+    const fallbackAddress = strategyType === "cross-chain"
+      ? await this._resolveCrossChainRemoteVault(entry, fallbackChainId)
+      : entry.address;
+
+    if (!fallbackAddress) return null;
+
+    return getHistoricalConvertToAssetsApr(
+      fallbackAddress,
+      fallbackChainId,
+      ZERO_APR_FALLBACK_WINDOW_SECONDS,
+      ONE,
+    );
   }
 
   private async _getOffchainStrategyApr(
