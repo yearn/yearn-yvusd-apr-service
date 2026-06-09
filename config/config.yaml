@@ -34,6 +34,8 @@ apr:
           rpc_url_env: ETH_RPC_URL
         '42161':
           rpc_url_env: ARB_RPC_URL
+        '8453':
+          rpc_url_env: BASE_RPC_URL
         '747474':
           rpc_url_env: KAT_RPC_URL
   strategy_cache:
