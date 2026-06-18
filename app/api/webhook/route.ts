@@ -9,6 +9,7 @@ import {
   verifyWebhookSignature,
 } from "@/lib/webhook-utils";
 import { NextRequest, NextResponse } from "next/server";
+import { captureError, flushObservability } from "@/lib/observability";
 
 const YVUSD_ADDRESS = "0x696d02Db93291651ED510704c9b286841d506987";
 const LOCKED_YVUSD_ADDRESS = "0xAaaFEa48472f77563961Cdb53291DEDfB46F9040";
@@ -153,6 +154,8 @@ export async function POST(request: NextRequest) {
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     console.error(`Webhook error: ${message}`, { error });
+    captureError(error);
+    await flushObservability();
     return NextResponse.json({ error: message }, { status: 400 });
   }
 }
