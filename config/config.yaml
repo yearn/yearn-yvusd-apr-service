@@ -64,6 +64,11 @@ apr:
         fallback_apr: 0.04
     strategies:
       # New convertors / compounders that need explicit APR routing.
+      '0x0e297de4005883c757c9f09fdf7cf1363c20e626':
+        apr_source: offchain
+        offchain:
+          type: morpho-api
+          address: '0xF9bdDd4A9b3A45f980e11fDDE96e16364dDBEc49'
       '0xb44ee7869b9d47cd605b05022c8bd8612ebe53ee':
         apr_source: offchain
         offchain:
