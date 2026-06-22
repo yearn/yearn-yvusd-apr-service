@@ -13,19 +13,26 @@ import {
   getStrategyMarketId,
   getStrategyMorpho,
   getStrategyLeverageRatio,
+  getStrategyLendingPool,
   getStrategyPendleMarket,
   getStrategyPendleRouter,
   getStrategyVault,
-  getPendlePtRealizedApy,
   getPendleMarketImpliedApy,
   getPendleMarketApyFromApi,
+  getPendlePtFixedApr,
   getMorphoVaultAprFromApi,
+  getErc4626Asset,
   getAaveReserveCurrentBorrowApy,
   getAaveAssetCurrentBorrowApy,
   getAaveReserveCurrentSupplyApy,
   getAaveReserveHistoricalBorrowApy,
   getAaveAssetHistoricalBorrowApy,
   getAaveReserveHistoricalSupplyApy,
+  getAavePoolAssetCurrentBorrowApy,
+  getAavePoolAssetCurrentSupplyApy,
+  getAavePoolAssetHistoricalBorrowApy,
+  getAavePoolAssetHistoricalSupplyApy,
+  getPawnBrokerBorrowApy,
   getKatanaVaultAprFromApi,
   getMorphoMarketBorrowApy,
   getMorphoMarketHistoricalBorrowApy,
@@ -488,7 +495,7 @@ export class YvUsdAprEngine {
       return this._getKatanaApiApr(entry, chainId, cfg);
     }
     if (mode === "pt-estimated" || mode === "pt") {
-      return this._getPtEstimatedOffchainApr(entry, chainId, cfg);
+      return this._getPtEstimatedOffchainApr(entry, chainId, cfg, debtChange);
     }
 
     if (mode === "looper" || LOOPER_STRATEGY_TYPES.has(mode) || MORPHO_LOOPER_TYPES.has(mode)) {
@@ -530,10 +537,10 @@ export class YvUsdAprEngine {
     entry: StrategyEntry,
     chainId: number,
     cfg: Record<string, unknown>,
+    debtChange: bigint = 0n,
   ): Promise<bigint | null> {
     const ptToken = String(cfg.pt ?? cfg.pt_token ?? entry.meta.pt ?? "").trim();
     let apiApyRaw: bigint | null = null;
-    const windowSeconds = this._resolveWindowSeconds(cfg);
 
     let pendleMarket = String(cfg.market ?? entry.meta.market ?? "").trim();
     if (!pendleMarket) {
@@ -553,13 +560,25 @@ export class YvUsdAprEngine {
       }
     }
 
-    if (pendleMarket) {
-      const realizedApy = await getPendlePtRealizedApy(
-        pendleMarket,
-        chainId,
-        windowSeconds,
-      );
-      if (realizedApy !== null) return realizedApy;
+    const oracleLikeApr = await getPendlePtFixedApr(chainId, {
+      strategy: String(cfg.strategy ?? cfg.strategy_address ?? entry.address ?? "").trim(),
+      pt: ptToken,
+      market: pendleMarket,
+      oracle: String(cfg.oracle ?? cfg.pendle_oracle ?? entry.meta.oracle ?? "").trim(),
+      pendleToken: String(
+        cfg.pendle_token ?? cfg.pendleToken ?? entry.meta.pendle_token ?? "",
+      ).trim(),
+      debtChange,
+      twapDuration: Number(cfg.twap_duration ?? cfg.twapDuration ?? 1800),
+    });
+    if (oracleLikeApr !== null) {
+      if (oracleLikeApr.market) {
+        entry.meta = { ...(entry.meta ?? {}), market: oracleLikeApr.market };
+      }
+      if (oracleLikeApr.pt) {
+        entry.meta = { ...(entry.meta ?? {}), pt: oracleLikeApr.pt };
+      }
+      return oracleLikeApr.aprRaw;
     }
 
     let pendleRouter = String(cfg.pendle_router ?? entry.meta.pendle_router ?? "").trim();
@@ -675,12 +694,13 @@ export class YvUsdAprEngine {
       const collateralMarket = String(meta.market ?? "").trim();
       const collateralRouter = String(meta.pendle_router ?? "").trim();
       const syntheticPtEntry: StrategyEntry = {
-        address: collateralAddress,
+        address: entry.address,
         active: true,
         apr_source: "offchain",
         offchain: {
           type: "pt-estimated",
           window_seconds: windowSeconds,
+          strategy: entry.address,
           pt: collateralAddress,
           ...(collateralMarket ? { market: collateralMarket } : {}),
           ...(collateralRouter ? { pendle_router: collateralRouter } : {}),
@@ -699,6 +719,30 @@ export class YvUsdAprEngine {
         syntheticPtEntry.offchain,
       );
       if (ptApr !== null) return ptApr;
+    }
+
+    const poolAddress = String(
+      cfg.pool
+      ?? cfg.lending_pool
+      ?? cfg.lendingPool
+      ?? meta.pool
+      ?? "",
+    ).trim() || await getStrategyLendingPool(entry.address, chainId);
+    if (poolAddress) {
+      const poolSupplyApy = await getAavePoolAssetHistoricalSupplyApy(
+        poolAddress,
+        collateralAddress,
+        chainId,
+        windowSeconds,
+      );
+      if (poolSupplyApy !== null) return poolSupplyApy;
+
+      const poolSpotSupplyApy = await getAavePoolAssetCurrentSupplyApy(
+        poolAddress,
+        collateralAddress,
+        chainId,
+      );
+      if (poolSpotSupplyApy !== null) return poolSpotSupplyApy;
     }
 
     const aaveSupplyApy = await getAaveReserveHistoricalSupplyApy(
@@ -772,11 +816,39 @@ export class YvUsdAprEngine {
     const aToken = String(
       cfg.a_token ?? cfg.atoken ?? cfg.aToken ?? entry.meta.aToken ?? "",
     ).trim();
-    const borrowAsset = String(
-      cfg.borrow_asset ?? cfg.borrowAsset ?? "",
+    let borrowAsset = String(
+      cfg.borrow_asset ?? cfg.borrowAsset ?? entry.meta.borrow_asset ?? "",
     ).trim();
+    const poolAddress = String(
+      cfg.pool
+      ?? cfg.lending_pool
+      ?? cfg.lendingPool
+      ?? entry.meta.pool
+      ?? "",
+    ).trim() || await getStrategyLendingPool(entry.address, chainId);
 
-    if (AAVE_STRATEGY_TYPES.has(strategyType) || aToken || borrowAsset) {
+    if (poolAddress && !borrowAsset) {
+      borrowAsset = await getErc4626Asset(entry.address, chainId) ?? "";
+    }
+
+    if (AAVE_STRATEGY_TYPES.has(strategyType) || aToken || borrowAsset || poolAddress) {
+      if (poolAddress && borrowAsset) {
+        const historicalBorrow = await getAavePoolAssetHistoricalBorrowApy(
+          poolAddress,
+          borrowAsset,
+          chainId,
+          windowSeconds,
+        );
+        if (historicalBorrow !== null) return historicalBorrow;
+
+        const currentBorrow = await getAavePoolAssetCurrentBorrowApy(
+          poolAddress,
+          borrowAsset,
+          chainId,
+        );
+        if (currentBorrow !== null) return currentBorrow;
+      }
+
       if (aToken) {
         const historicalBorrow = await getAaveReserveHistoricalBorrowApy(
           aToken,
@@ -799,6 +871,16 @@ export class YvUsdAprEngine {
       }
       return null;
     }
+
+    const pawnBrokerAddress = String(
+      cfg.pawn_broker ?? cfg.pawnBroker ?? entry.meta.pawn_broker ?? "",
+    ).trim();
+    const pawnBrokerBorrow = await getPawnBrokerBorrowApy(
+      entry.address,
+      chainId,
+      pawnBrokerAddress,
+    );
+    if (pawnBrokerBorrow !== null) return pawnBrokerBorrow;
 
     let marketId = String(cfg.market_id ?? entry.meta.market_id ?? "").trim();
     let morpho = String(cfg.morpho ?? entry.meta.morpho ?? "").trim();
