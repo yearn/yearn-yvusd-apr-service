@@ -74,6 +74,16 @@ const crossChainAbi = parseAbi([
 const targetLeverageAbi = parseAbi([
   "function targetLeverageRatio() view returns (uint256)",
 ]);
+const lendingPoolAbi = parseAbi([
+  "function POOL() view returns (address)",
+  "function pool() view returns (address)",
+]);
+const pawnBrokerLooperAbi = parseAbi([
+  "function PAWN_BROKER() view returns (address)",
+]);
+const pawnBrokerRateAbi = parseAbi([
+  "function rate() view returns (uint256)",
+]);
 const morphoAbi = parseAbi(["function morpho() view returns (address)"]);
 const aTokenAbi = parseAbi(["function aToken() view returns (address)"]);
 const aaveReceiptTokenAbi = parseAbi([
@@ -90,6 +100,8 @@ const pendleRouterAbi = parseAbi([
 ]);
 const pendleRouterStaticAbi = parseAbi([
   "function getPtToAssetRate(address market) view returns (uint256)",
+  "function swapExactTokenForPtStatic(address market, address tokenIn, uint256 amountTokenIn) view returns (uint256 netPtOut, uint256 netSyFee, uint256 priceImpact, uint256 exchangeRateAfter, uint256 netSyInterm)",
+  "function swapExactPtForTokenStatic(address market, uint256 exactPtIn, address tokenOut) view returns (uint256 netTokenOut, uint256 netSyFee, uint256 priceImpact, uint256 exchangeRateAfter, uint256 netSyInterm)",
 ]);
 const routerAbi = parseAbi([
   "function router() view returns (address)",
@@ -120,6 +132,18 @@ const pendlePtAltAbi = parseAbi([
 ]);
 const principalTokenAbi = parseAbi([
   "function principalToken() view returns (address)",
+]);
+const pendleStrategyAprAbi = parseAbi([
+  "function ORACLE() view returns (address)",
+  "function PENDLE_TOKEN() view returns (address)",
+  "function markets(address) view returns (address)",
+]);
+const pendleOracleAbi = parseAbi([
+  "function getPtToAssetRate(address market, uint32 duration) view returns (uint256)",
+]);
+const pendleMarketExpiryAbi = parseAbi([
+  "function expiry() view returns (uint256)",
+  "function isExpired() view returns (bool)",
 ]);
 const pendleReadStateAbi = parseAbi([
   "function readState(address router) view returns ((int256 totalPt, int256 totalSy, int256 totalLp, address treasury, int256 scalarRoot, uint256 expiry, uint256 lnFeeRateRoot, uint256 reserveFeePercent, uint256 lastLnImpliedRate) market)",
@@ -445,6 +469,8 @@ export interface ClassificationMeta {
   remote_vault_type?: string;
   morpho?: string;
   market_id?: string;
+  pool?: string;
+  borrow_asset?: string;
   market?: string;
   pt?: string;
   aToken?: string;
@@ -529,6 +555,8 @@ export async function classifyAddress(
     const hasMorphoMarketId = isValidNonZeroBytes32(marketId);
     const morphoAddr = await probeAddress(addr, chainId, morphoAbi, "morpho");
     const aTokenAddr = await probeAddress(addr, chainId, aTokenAbi, "aToken");
+    const poolAddr = await probeAddress(addr, chainId, lendingPoolAbi, "POOL") ??
+      await probeAddress(addr, chainId, lendingPoolAbi, "pool");
     let pendleAddr = await probePendleRouter(addr, chainId);
     let market = await probePendleMarket(addr, chainId);
     const pt = await probePendlePt(addr, chainId);
@@ -544,9 +572,12 @@ export async function classifyAddress(
       baseType = "morpho-looper";
       meta.market_id = marketId;
       if (morphoAddr) meta.morpho = morphoAddr;
-    } else if (aTokenAddr !== null) {
+    } else if (aTokenAddr !== null || poolAddr !== null) {
       baseType = "aave-looper";
-      meta.aToken = aTokenAddr;
+      if (aTokenAddr) meta.aToken = aTokenAddr;
+      if (poolAddr) meta.pool = poolAddr;
+      const borrowAsset = await probeAddress(addr, chainId, erc4626Abi, "asset");
+      if (borrowAsset) meta.borrow_asset = borrowAsset;
     }
 
     // router() exists on many non-Pendle contracts; only classify as Pendle
@@ -821,6 +852,30 @@ export async function getStrategyLeverageRatio(strategy: string, chainId: number
   );
 }
 
+export async function getStrategyLendingPool(strategy: string, chainId: number): Promise<string | null> {
+  const addr = getAddress(strategy);
+  const pool = await probeAddress(addr, chainId, lendingPoolAbi, "POOL");
+  if (pool) return pool;
+  return probeAddress(addr, chainId, lendingPoolAbi, "pool");
+}
+
+export async function getPawnBrokerBorrowApy(
+  strategy: string,
+  chainId: number,
+  pawnBrokerAddress?: string | null,
+): Promise<bigint | null> {
+  let pawnBroker = normalizeAddressOrNull(pawnBrokerAddress);
+  if (!pawnBroker) {
+    pawnBroker = await probeAddress(getAddress(strategy), chainId, pawnBrokerLooperAbi, "PAWN_BROKER");
+  }
+  if (!pawnBroker) return null;
+
+  const rateBps = await probeUint(getAddress(pawnBroker), chainId, pawnBrokerRateAbi, "rate");
+  if (rateBps === null) return null;
+
+  return (rateBps * ONE) / 10_000n;
+}
+
 export async function getStrategyPendleMarket(
   strategy: string,
   chainId: number,
@@ -835,6 +890,57 @@ export async function getStrategyPendleRouter(
 ): Promise<string | null> {
   const router = await probePendleRouter(getAddress(strategy), chainId);
   return router ?? null;
+}
+
+function normalizeAddressOrNull(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  try {
+    return getAddress(trimmed);
+  } catch {
+    return null;
+  }
+}
+
+async function getStrategyPendlePrincipalToken(
+  strategy: string,
+  chainId: number,
+): Promise<string | null> {
+  return probeAddress(getAddress(strategy), chainId, principalTokenAbi, "principalToken");
+}
+
+async function getStrategyPendleOracle(
+  strategy: string,
+  chainId: number,
+): Promise<string | null> {
+  return probeAddress(getAddress(strategy), chainId, pendleStrategyAprAbi, "ORACLE");
+}
+
+async function getStrategyPendleToken(
+  strategy: string,
+  chainId: number,
+): Promise<string | null> {
+  return probeAddress(getAddress(strategy), chainId, pendleStrategyAprAbi, "PENDLE_TOKEN");
+}
+
+async function getStrategyPendleMarketForPt(
+  strategy: string,
+  pt: string,
+  chainId: number,
+): Promise<string | null> {
+  const client = getViemClient(chainId);
+  if (!client) return null;
+  try {
+    return await client.readContract({
+      address: getAddress(strategy),
+      abi: pendleStrategyAprAbi,
+      functionName: "markets",
+      args: [getAddress(pt)],
+    });
+  } catch {
+    return null;
+  }
 }
 
 export async function getStrategyVault(
@@ -1315,6 +1421,199 @@ async function getPendlePtToAssetRate(
   }
 }
 
+async function getPendleOraclePtToAssetRate(
+  oracle: string,
+  market: string,
+  chainId: number,
+  twapDuration: number,
+): Promise<bigint | null> {
+  const client = getViemClient(chainId);
+  if (!client) return null;
+  try {
+    return await client.readContract({
+      address: getAddress(oracle),
+      abi: pendleOracleAbi,
+      functionName: "getPtToAssetRate",
+      args: [getAddress(market), twapDuration],
+    });
+  } catch {
+    return null;
+  }
+}
+
+async function getPendleMarketExpiry(
+  market: string,
+  chainId: number,
+): Promise<bigint | null> {
+  const client = getViemClient(chainId);
+  if (!client) return null;
+  try {
+    const isExpired = await client.readContract({
+      address: getAddress(market),
+      abi: pendleMarketExpiryAbi,
+      functionName: "isExpired",
+    });
+    if (isExpired) return 0n;
+
+    return await client.readContract({
+      address: getAddress(market),
+      abi: pendleMarketExpiryAbi,
+      functionName: "expiry",
+    });
+  } catch {
+    return null;
+  }
+}
+
+async function getPendlePtOutForAssetIn(
+  market: string,
+  pendleToken: string,
+  amountIn: bigint,
+  chainId: number,
+): Promise<bigint | null> {
+  const client = getViemClient(chainId);
+  if (!client) return null;
+  const routerStatic = await getPendleRouterStatic(chainId);
+  if (!routerStatic) return null;
+
+  try {
+    const result = await client.readContract({
+      address: getAddress(routerStatic),
+      abi: pendleRouterStaticAbi,
+      functionName: "swapExactTokenForPtStatic",
+      args: [getAddress(market), getAddress(pendleToken), amountIn],
+    }) as readonly [bigint, bigint, bigint, bigint, bigint];
+    return result[0];
+  } catch {
+    return null;
+  }
+}
+
+async function getPendleAssetOutForPtIn(
+  market: string,
+  pendleToken: string,
+  ptIn: bigint,
+  chainId: number,
+): Promise<bigint | null> {
+  const client = getViemClient(chainId);
+  if (!client) return null;
+  const routerStatic = await getPendleRouterStatic(chainId);
+  if (!routerStatic) return null;
+
+  try {
+    const result = await client.readContract({
+      address: getAddress(routerStatic),
+      abi: pendleRouterStaticAbi,
+      functionName: "swapExactPtForTokenStatic",
+      args: [getAddress(market), ptIn, getAddress(pendleToken)],
+    }) as readonly [bigint, bigint, bigint, bigint, bigint];
+    return result[0];
+  } catch {
+    return null;
+  }
+}
+
+export interface PendlePtFixedAprParams {
+  strategy?: string | null;
+  pt?: string | null;
+  market?: string | null;
+  oracle?: string | null;
+  pendleToken?: string | null;
+  debtChange?: bigint;
+  twapDuration?: number;
+}
+
+export async function getPendlePtFixedApr(
+  chainId: number,
+  params: PendlePtFixedAprParams,
+): Promise<{ aprRaw: bigint; market: string | null; pt: string | null } | null> {
+  const strategy = normalizeAddressOrNull(params.strategy);
+  let pt = normalizeAddressOrNull(params.pt);
+  let market = normalizeAddressOrNull(params.market);
+  let oracle = normalizeAddressOrNull(params.oracle);
+  let pendleToken = normalizeAddressOrNull(params.pendleToken);
+
+  if (!pt && strategy) {
+    pt = await getStrategyPendlePrincipalToken(strategy, chainId);
+  }
+
+  if (!market && strategy && pt) {
+    market = await getStrategyPendleMarketForPt(strategy, pt, chainId);
+  }
+  if (!market && strategy) {
+    market = await getStrategyPendleMarket(strategy, chainId);
+  }
+  if (!market && pt) {
+    const api = await getPendleMarketApyFromApi(chainId, pt);
+    market = api.market;
+  }
+  if (!market && pt) {
+    market = await getStrategyPendleMarket(pt, chainId);
+  }
+  if (!market) return null;
+
+  if (!oracle && strategy) {
+    oracle = await getStrategyPendleOracle(strategy, chainId);
+  }
+  if (!pendleToken && strategy) {
+    pendleToken = await getStrategyPendleToken(strategy, chainId);
+  }
+
+  const requestedTwapDuration = Number(params.twapDuration ?? 1800);
+  const twapDuration = Number.isFinite(requestedTwapDuration) && requestedTwapDuration > 0
+    ? requestedTwapDuration
+    : 1800;
+  let ptToAssetRate = oracle
+    ? await getPendleOraclePtToAssetRate(oracle, market, chainId, twapDuration)
+    : null;
+  if (ptToAssetRate === null) {
+    ptToAssetRate = await getPendlePtToAssetRate(market, chainId);
+  }
+  if (ptToAssetRate === null || ptToAssetRate <= 0n) return null;
+
+  let ptPerAsset = (ONE * ONE) / ptToAssetRate;
+  const debtChange = params.debtChange ?? 0n;
+
+  if (debtChange > 0n && pendleToken) {
+    const ptOut = await getPendlePtOutForAssetIn(market, pendleToken, debtChange, chainId);
+    if (ptOut !== null) {
+      if (ptOut === 0n) return { aprRaw: 0n, market, pt };
+      ptPerAsset = (ptOut * ONE) / debtChange;
+    }
+  } else if (debtChange < 0n && pendleToken) {
+    const assetAmount = -debtChange;
+    const ptIn = (assetAmount * ptPerAsset) / ONE;
+    if (ptIn === 0n) return { aprRaw: 0n, market, pt };
+
+    const assetOut = await getPendleAssetOutForPtIn(market, pendleToken, ptIn, chainId);
+    if (assetOut !== null) {
+      if (assetOut === 0n) return { aprRaw: 0n, market, pt };
+      ptPerAsset = (ptIn * ONE) / assetOut;
+    }
+  }
+
+  if (ptPerAsset <= ONE) return { aprRaw: 0n, market, pt };
+
+  const expiry = await getPendleMarketExpiry(market, chainId);
+  if (expiry === null) return null;
+  if (expiry <= 0n) return { aprRaw: 0n, market, pt };
+
+  const client = getViemClient(chainId);
+  if (!client) return null;
+  let timestamp: bigint;
+  try {
+    const block = await client.getBlock();
+    timestamp = block.timestamp;
+  } catch {
+    return null;
+  }
+  if (expiry <= timestamp) return { aprRaw: 0n, market, pt };
+
+  const timeToExpiry = expiry - timestamp;
+  const aprRaw = ((ptPerAsset - ONE) * BigInt(SECONDS_PER_YEAR)) / timeToExpiry;
+  return { aprRaw, market, pt };
+}
+
 export async function getPendlePtRealizedApy(
   market: string,
   chainId: number,
@@ -1434,6 +1733,122 @@ export async function getMorphoMarketHistoricalBorrowApy(
   if (currentIndex === null || oldIndex === null) return null;
 
   return annualizeRawGrowth(currentIndex, oldIndex, bounds.elapsedSeconds);
+}
+
+export async function getAavePoolAssetHistoricalSupplyApy(
+  pool: string,
+  asset: string,
+  chainId: number,
+  windowSeconds: number,
+): Promise<bigint | null> {
+  if (windowSeconds <= 0) return null;
+
+  const client = getViemClient(chainId);
+  if (!client) return null;
+
+  const bounds = await getHistoricalWindowBounds(chainId, windowSeconds);
+  if (!bounds) return null;
+
+  try {
+    const [currentIndex, oldIndex] = await Promise.all([
+      client.readContract({
+        address: getAddress(pool),
+        abi: aavePoolAbi,
+        functionName: "getReserveNormalizedIncome",
+        args: [getAddress(asset)],
+        blockNumber: bounds.latestBlockNumber,
+      }),
+      client.readContract({
+        address: getAddress(pool),
+        abi: aavePoolAbi,
+        functionName: "getReserveNormalizedIncome",
+        args: [getAddress(asset)],
+        blockNumber: bounds.oldBlockNumber,
+      }),
+    ]);
+    return annualizeRawGrowth(currentIndex, oldIndex, bounds.elapsedSeconds);
+  } catch {
+    return null;
+  }
+}
+
+export async function getAavePoolAssetCurrentSupplyApy(
+  pool: string,
+  asset: string,
+  chainId: number,
+): Promise<bigint | null> {
+  const client = getViemClient(chainId);
+  if (!client) return null;
+
+  try {
+    const reserveData = await client.readContract({
+      address: getAddress(pool),
+      abi: aavePoolAbi,
+      functionName: "getReserveData",
+      args: [getAddress(asset)],
+    });
+    return rayAnnualRateToApyRaw(BigInt(reserveData[2]));
+  } catch {
+    return null;
+  }
+}
+
+export async function getAavePoolAssetHistoricalBorrowApy(
+  pool: string,
+  asset: string,
+  chainId: number,
+  windowSeconds: number,
+): Promise<bigint | null> {
+  if (windowSeconds <= 0) return null;
+
+  const client = getViemClient(chainId);
+  if (!client) return null;
+
+  const bounds = await getHistoricalWindowBounds(chainId, windowSeconds);
+  if (!bounds) return null;
+
+  try {
+    const [currentIndex, oldIndex] = await Promise.all([
+      client.readContract({
+        address: getAddress(pool),
+        abi: aavePoolAbi,
+        functionName: "getReserveNormalizedVariableDebt",
+        args: [getAddress(asset)],
+        blockNumber: bounds.latestBlockNumber,
+      }),
+      client.readContract({
+        address: getAddress(pool),
+        abi: aavePoolAbi,
+        functionName: "getReserveNormalizedVariableDebt",
+        args: [getAddress(asset)],
+        blockNumber: bounds.oldBlockNumber,
+      }),
+    ]);
+    return annualizeRawGrowth(currentIndex, oldIndex, bounds.elapsedSeconds);
+  } catch {
+    return null;
+  }
+}
+
+export async function getAavePoolAssetCurrentBorrowApy(
+  pool: string,
+  asset: string,
+  chainId: number,
+): Promise<bigint | null> {
+  const client = getViemClient(chainId);
+  if (!client) return null;
+
+  try {
+    const reserveData = await client.readContract({
+      address: getAddress(pool),
+      abi: aavePoolAbi,
+      functionName: "getReserveData",
+      args: [getAddress(asset)],
+    });
+    return rayAnnualRateToApyRaw(BigInt(reserveData[4]));
+  } catch {
+    return null;
+  }
 }
 
 export async function getAaveReserveHistoricalSupplyApy(
