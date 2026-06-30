@@ -200,6 +200,8 @@ interface MorphoVaultApiItem {
   symbol?: string;
   asset?: { symbol?: string | null } | null;
   state?: {
+    avgNetApy?: number | null;
+    avgNetApyExcludingRewards?: number | null;
     netApy?: number | null;
     netApyExcludingRewards?: number | null;
     allRewards?: MorphoVaultApiReward[] | null;
@@ -211,6 +213,8 @@ interface MorphoVaultV2ApiItem {
   name?: string;
   symbol?: string;
   asset?: { symbol?: string | null } | null;
+  avgNetApy?: number | null;
+  avgNetApyExcludingRewards?: number | null;
   netApy?: number | null;
   netApyExcludingRewards?: number | null;
   rewards?: MorphoVaultApiReward[] | null;
@@ -1082,9 +1086,13 @@ export async function getPendleMarketApyFromApi(
 function morphoVaultItemTotalApr(item: MorphoVaultApiItem | null | undefined): number | null {
   if (!item?.state) return null;
 
+  const avgNetApy = parseFiniteNumber(item.state.avgNetApy) ?? 0;
+  if (Number.isFinite(avgNetApy) && avgNetApy !== 0) return avgNetApy;
   const netApy = parseFiniteNumber(item.state.netApy) ?? 0;
   if (Number.isFinite(netApy) && netApy !== 0) return netApy;
-  const baseApy = parseFiniteNumber(item.state.netApyExcludingRewards) ?? netApy;
+  const baseApy = parseFiniteNumber(item.state.avgNetApyExcludingRewards) ??
+    parseFiniteNumber(item.state.netApyExcludingRewards) ??
+    netApy;
   const rewards = Array.isArray(item.state.allRewards) ? item.state.allRewards : [];
   const rewardsApr = rewards.reduce(
     (sum, reward) => sum + (parseFiniteNumber(reward?.supplyApr) ?? 0),
@@ -1097,9 +1105,13 @@ function morphoVaultItemTotalApr(item: MorphoVaultApiItem | null | undefined): n
 function morphoVaultV2ItemTotalApr(item: MorphoVaultV2ApiItem | null | undefined): number | null {
   if (!item) return null;
 
+  const avgNetApy = parseFiniteNumber(item.avgNetApy) ?? 0;
+  if (Number.isFinite(avgNetApy) && avgNetApy !== 0) return avgNetApy;
   const netApy = parseFiniteNumber(item.netApy) ?? 0;
   if (Number.isFinite(netApy) && netApy !== 0) return netApy;
-  const baseApy = parseFiniteNumber(item.netApyExcludingRewards) ?? netApy;
+  const baseApy = parseFiniteNumber(item.avgNetApyExcludingRewards) ??
+    parseFiniteNumber(item.netApyExcludingRewards) ??
+    netApy;
   const rewards = Array.isArray(item.rewards) ? item.rewards : [];
   const rewardsApr = rewards.reduce(
     (sum, reward) => sum + (parseFiniteNumber(reward?.supplyApr) ?? 0),
@@ -1152,6 +1164,8 @@ export async function getMorphoVaultAprFromApi(
             symbol
             asset { symbol }
             state {
+              avgNetApy(lookback: ONE_DAY)
+              avgNetApyExcludingRewards(lookback: ONE_DAY)
               netApy
               netApyExcludingRewards
               allRewards {
@@ -1187,6 +1201,8 @@ export async function getMorphoVaultAprFromApi(
               name
               symbol
               asset { symbol }
+              avgNetApy(lookback: ONE_DAY)
+              avgNetApyExcludingRewards(lookback: ONE_DAY)
               netApy
               netApyExcludingRewards
               rewards {
@@ -1220,6 +1236,8 @@ export async function getMorphoVaultAprFromApi(
               symbol
               asset { symbol }
               state {
+                avgNetApy(lookback: ONE_DAY)
+                avgNetApyExcludingRewards(lookback: ONE_DAY)
                 netApy
                 netApyExcludingRewards
                 allRewards {
