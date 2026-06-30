@@ -1201,8 +1201,8 @@ export async function getMorphoVaultAprFromApi(
               name
               symbol
               asset { symbol }
-              avgNetApy
-              avgNetApyExcludingRewards
+              avgNetApy(lookback: ONE_DAY)
+              avgNetApyExcludingRewards(lookback: ONE_DAY)
               netApy
               netApyExcludingRewards
               rewards {
