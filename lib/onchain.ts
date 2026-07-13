@@ -231,6 +231,7 @@ interface KatanaVaultSnapshot {
       netAPR?: number | null;
     } | null;
     estimated?: {
+      apr?: number | null;
       components?: KatanaEstimatedComponents | null;
     } | null;
   } | null;
@@ -1294,8 +1295,10 @@ export async function getMorphoVaultAprFromApi(
 }
 
 function katanaVaultTotalApr(snapshot: KatanaVaultSnapshot | null | undefined): number | null {
+  const estimated = snapshot?.performance?.estimated ?? {};
   const oracle = snapshot?.performance?.oracle ?? {};
-  const baseApr = parseFiniteNumber(oracle.netAPR);
+  const baseApr = parseFiniteNumber(estimated.apr)
+    ?? parseFiniteNumber(oracle.netAPR);
   const rewardsApr = katanaVaultRewardsApr(snapshot);
   if (baseApr !== null || rewardsApr !== null) {
     const total = (baseApr ?? 0) + (rewardsApr ?? 0);
