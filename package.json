@@ -5,8 +5,7 @@
   "scripts": {
     "dev": "next dev --turbopack",
     "build": "next build",
-    "start": "next start",
-    "test": "bun test"
+    "start": "next start"
   },
   "dependencies": {
     "@envio-dev/hypersync-client": "1.0.0",

@@ -225,21 +225,15 @@ interface KatanaEstimatedComponents {
   fixedRateKatanaRewards?: number | null;
 }
 
-export interface KatanaVaultSnapshot {
+interface KatanaVaultSnapshot {
   performance?: {
     oracle?: {
-      apr?: number | null;
-      apy?: number | null;
       netAPR?: number | null;
-      netAPY?: number | null;
     } | null;
     estimated?: {
       apr?: number | null;
       apy?: number | null;
       components?: KatanaEstimatedComponents | null;
-    } | null;
-    historical?: {
-      net?: number | null;
     } | null;
   } | null;
 }
@@ -1301,19 +1295,12 @@ export async function getMorphoVaultAprFromApi(
   }
 }
 
-export function katanaVaultTotalApr(snapshot: KatanaVaultSnapshot | null | undefined): number | null {
-  const performance = snapshot?.performance;
-  const estimated = performance?.estimated;
-  const oracle = performance?.oracle;
-  // Keep Katana's headline rate aligned with yearn.fi: forward estimates first,
-  // then oracle and historical fallbacks.
-  const baseApr = parseFiniteNumber(estimated?.apy)
-    ?? parseFiniteNumber(estimated?.apr)
-    ?? parseFiniteNumber(oracle?.netAPY)
-    ?? parseFiniteNumber(oracle?.apy)
-    ?? parseFiniteNumber(oracle?.netAPR)
-    ?? parseFiniteNumber(oracle?.apr)
-    ?? parseFiniteNumber(performance?.historical?.net);
+function katanaVaultTotalApr(snapshot: KatanaVaultSnapshot | null | undefined): number | null {
+  const estimated = snapshot?.performance?.estimated ?? {};
+  const oracle = snapshot?.performance?.oracle ?? {};
+  const baseApr = parseFiniteNumber(estimated.apy)
+    ?? parseFiniteNumber(estimated.apr)
+    ?? parseFiniteNumber(oracle.netAPR);
   const rewardsApr = katanaVaultRewardsApr(snapshot);
   if (baseApr !== null || rewardsApr !== null) {
     const total = (baseApr ?? 0) + (rewardsApr ?? 0);
