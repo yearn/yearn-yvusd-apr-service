@@ -45,7 +45,16 @@ async function sync(reset: boolean = false) {
 
 export async function GET(request: NextRequest) {
   const secret = process.env.CRON_SECRET;
-  if (secret) {
+  if (!secret) {
+    // Fail closed in production so wiping the Vercel env store cannot leave
+    // /api/sync (including ?reset=true) publicly callable. Local dev skips auth.
+    if (process.env.NODE_ENV === "production") {
+      return NextResponse.json(
+        { error: "CRON_SECRET not configured" },
+        { status: 500 },
+      );
+    }
+  } else {
     const authHeader = request.headers.get("authorization");
     if (authHeader !== `Bearer ${secret}`) {
       return new Response("Unauthorized", { status: 401 });

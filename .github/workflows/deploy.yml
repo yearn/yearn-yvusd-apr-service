@@ -30,6 +30,5 @@ jobs:
         KONG_WEBHOOK_SECRET=yvusd-apr-service/KONG_WEBHOOK_SECRET
         YVUSD_ADDRESS=yvusd-apr-service/YVUSD_ADDRESS
         LOCKED_YVUSD_ADDRESS=yvusd-apr-service/LOCKED_YVUSD_ADDRESS
-        CRON_SECRET=yvusd-apr-service/CRON_SECRET
     secrets:
       OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}

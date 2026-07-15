@@ -5,9 +5,9 @@ import type { NextConfig } from "next";
 // vars are inlined into the build output so nothing has to live in Vercel's
 // env store. All are referenced server-side only, so they never reach the
 // client bundle.
-// Note: CRON_SECRET is intentionally NOT here — Vercel's cron scheduler signs
-// requests from its own env store, so CRON_SECRET must remain set on the
-// Vercel project (not only as a build-env).
+// CRON_SECRET is intentionally NOT inlined. Vercel cron signs /api/sync from
+// the project env store, so CRON_SECRET must stay set in the Vercel dashboard
+// (the one exception to "nothing secret in Vercel"). See README.
 const INLINED_ENV = [
   "ETH_RPC_URL",
   "ARB_RPC_URL",
