@@ -1,11 +1,13 @@
 import type { NextConfig } from "next";
 
-// Runtime config sourced from 1Password and injected at `vercel build` time
-// (see .github/workflows/deploy.yml). Listed vars are inlined into the build
-// output so nothing has to live in Vercel's env store. All are referenced
-// server-side only, so they never reach the client bundle.
+// Runtime config sourced from 1Password via yearn-gha vercel-deploy and
+// injected at `vercel build` time (see .github/workflows/deploy.yml). Listed
+// vars are inlined into the build output so nothing has to live in Vercel's
+// env store. All are referenced server-side only, so they never reach the
+// client bundle.
 // Note: CRON_SECRET is intentionally NOT here — Vercel's cron scheduler signs
-// requests from its own env store, so deploy.yml pushes it into Vercel instead.
+// requests from its own env store, so CRON_SECRET must remain set on the
+// Vercel project (not only as a build-env).
 const INLINED_ENV = [
   "ETH_RPC_URL",
   "ARB_RPC_URL",
