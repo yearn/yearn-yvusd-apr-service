@@ -241,12 +241,23 @@ export function initOnchainClients(config: OnchainSourceConfig): void {
   _sourceConfig = config;
 }
 
+// Static map of the rpc_url_env names used in config/config.yaml. Literal
+// process.env.* access is required so next.config.ts can inline the 1Password
+// values at build time — dynamic process.env[name] access is NOT inlined and
+// would resolve to undefined on Vercel (build-time env isn't carried to runtime).
+const RPC_URL_ENV: Record<string, string | undefined> = {
+  ETH_RPC_URL: process.env.ETH_RPC_URL,
+  ARB_RPC_URL: process.env.ARB_RPC_URL,
+  BASE_RPC_URL: process.env.BASE_RPC_URL,
+  KAT_RPC_URL: process.env.KAT_RPC_URL,
+};
+
 function resolveRpcUrl(
   chainConfig?: { rpc_url_env?: string; rpc_url?: string },
 ): string | undefined {
   if (!chainConfig) return undefined;
   if (chainConfig.rpc_url) return chainConfig.rpc_url;
-  if (chainConfig.rpc_url_env) return process.env[chainConfig.rpc_url_env] || undefined;
+  if (chainConfig.rpc_url_env) return RPC_URL_ENV[chainConfig.rpc_url_env] || undefined;
   return undefined;
 }
 
