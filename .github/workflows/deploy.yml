@@ -16,7 +16,7 @@ permissions:
 
 jobs:
   deploy:
-    uses: yearn/yearn-gha/.github/workflows/vercel-deploy.yml@2ad17abdf9e8fb1024e5a369ce70cfa78c7af66a
+    uses: yearn/yearn-gha/.github/workflows/vercel-deploy.yml@67e88b5ed430f4b8dbb6624a1148ea8fc4e72ed5
     with:
       vault: webops-prod-yvusd-apr-service
       environment: ${{ github.event_name == 'pull_request' && 'preview' || 'production' }}
