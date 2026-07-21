@@ -16,7 +16,7 @@ permissions:
 
 jobs:
   deploy:
-    uses: yearn/yearn-gha/.github/workflows/vercel-deploy.yml@711efc3dc97f65bbf6d6045d593732a935171e32
+    uses: yearn/yearn-gha/.github/workflows/vercel-deploy.yml@2ad17abdf9e8fb1024e5a369ce70cfa78c7af66a
     with:
       vault: webops-prod-yvusd-apr-service
       environment: ${{ github.event_name == 'pull_request' && 'preview' || 'production' }}
@@ -30,5 +30,6 @@ jobs:
         KONG_WEBHOOK_SECRET=yvusd-apr-service/KONG_WEBHOOK_SECRET
         YVUSD_ADDRESS=yvusd-apr-service/YVUSD_ADDRESS
         LOCKED_YVUSD_ADDRESS=yvusd-apr-service/LOCKED_YVUSD_ADDRESS
+        CRON_SECRET=yvusd-apr-service/CRON_SECRET
     secrets:
       OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}

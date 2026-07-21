@@ -28,23 +28,22 @@ A running Redis instance is required. To run redis on localhost, try docker like
 docker run --rm -p 6379:6379 redis:latest
 ```
 
-### `CRON_SECRET` (Vercel dashboard only)
+### Secrets (1Password → Vercel)
 
-Vercel cron jobs call `GET /api/sync` every 15 minutes. The endpoint requires `CRON_SECRET` to authenticate these requests. Vercel sends it automatically as an `Authorization: Bearer <secret>` header.
+Deploy secrets live in 1Password. The reusable `yearn-gha` workflow syncs the
+declared set into the Vercel project env for the deploy target (sensitive) before
+build/deploy. App code reads them via `process.env` — do not put secrets in
+`next.config` `env`.
 
-**This is the only secret that lives in Vercel's env store.** All other runtime secrets (RPC URLs, Redis, Hypersync, Kong, addresses) are loaded from 1Password at build time and inlined into the deployment — they are not stored on Vercel. `CRON_SECRET` cannot follow that path: Vercel's cron scheduler signs requests from the project env store, and the deploy workflow does not push it into Vercel. Do not delete it when cleaning the dashboard after the 1Password migration.
+`CRON_SECRET` is included: Vercel cron calls `GET /api/sync` every 15 minutes with
+`Authorization: Bearer <CRON_SECRET>`. Store it in the project vault
+(`yvusd-apr-service/CRON_SECRET`); the deploy workflow pushes it to Vercel.
 
-Generate a secret (at least 16 random characters):
+Generate one (at least 16 random characters) if rotating:
 
 ```
 openssl rand -base64 32
 ```
-
-Add it as an environment variable in your Vercel project:
-
-1. Go to **Settings > Environment Variables** in the Vercel dashboard
-2. Add `CRON_SECRET` with your generated value
-3. Scope it to **Production** (cron jobs only run on production deployments)
 
 In production, if `CRON_SECRET` is unset the route returns `500` (fail closed). In local dev (`NODE_ENV !== "production"`), the auth check is skipped so you can call the endpoint freely.
 
@@ -81,7 +80,7 @@ Possible `status` values: `ok`, `degraded` (stale data or empty), `error` (Redis
 
 Triggers a full sync cycle: indexes strategy events from the chain, hydrates onchain metadata, computes APRs for all configured vaults, and writes results to Redis. Called automatically by Vercel cron every 15 minutes.
 
-Requires `Authorization: Bearer <CRON_SECRET>` (Vercel cron sends this automatically). Production fails closed with `500` if `CRON_SECRET` is unset; local dev skips auth when it is absent. See [CRON_SECRET](#cron_secret-vercel-dashboard-only).
+Requires `Authorization: Bearer <CRON_SECRET>` (Vercel cron sends this automatically). Production fails closed with `500` if `CRON_SECRET` is unset; local dev skips auth when it is absent. See [Secrets](#secrets-1password--vercel).
 
 **Response**
 
