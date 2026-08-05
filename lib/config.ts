@@ -2,7 +2,7 @@ import fs from "fs";
 import path from "path";
 import YAML from "yaml";
 
-export const DEFAULT_HISTORICAL_WINDOW_SECONDS = 7 * 24 * 60 * 60;
+export const DEFAULT_HISTORICAL_WINDOW_SECONDS = 2 * 24 * 60 * 60;
 
 export interface SourceRef {
   kind: "onchain" | "offchain";

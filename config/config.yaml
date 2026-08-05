@@ -55,12 +55,15 @@ apr:
         type: historical
       '0xC58D044404d8B14e953C115E67823784dEA53d8F':
         type: historical
+      '0x88887bE419578051FF9F4eb6C858A951921D8888':
+        type: historical
+        window_seconds: 604800
       # syrupUSDC on Arbitrum — collateral for syrupUSDC/USDC morpho looper
       # Uses Morpho oracle price growth to estimate yield (not ERC4626)
       '0x41CA7586cC1311807B4605fBB748a3B8862b42b5':
         type: oracle-growth
         oracle: '0x8f30fF3d54e69D4dfD5E99a9937474FaDdf27009'
-        window_seconds: 604800
+        window_seconds: 172800
         fallback_apr: 0.04
     strategies:
       # New convertors / compounders that need explicit APR routing.
