@@ -21,8 +21,11 @@ export async function OPTIONS() {
 export async function POST(request: NextRequest) {
   const secret = process.env.KONG_WEBHOOK_SECRET;
   if (!secret) {
+    const error = new Error("Webhook secret not configured");
+    captureError(error);
+    await flushObservability();
     return NextResponse.json(
-      { error: "Webhook secret not configured" },
+      { error: error.message },
       { status: 500 },
     );
   }

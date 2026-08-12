@@ -33,6 +33,10 @@ export function initObservability(): void {
 }
 
 export function captureError(error: unknown): void {
+  // Keep reporting available even if Next's instrumentation hook was not run
+  // before a route handler (for example in a test or an alternate runtime).
+  initObservability();
+
   const err = error instanceof Error ? error : new Error(String(error));
   const attributes: Record<string, string> = {
     [ATTR_EXCEPTION_TYPE]: err.name,
@@ -52,5 +56,10 @@ export function captureError(error: unknown): void {
 
 // Serverless runtimes may freeze before batched logs export; flush after capture.
 export async function flushObservability(): Promise<void> {
-  await provider?.forceFlush();
+  try {
+    await provider?.forceFlush();
+  } catch (error) {
+    // Export failures must not mask the error the route is trying to return.
+    console.error("OpenTelemetry log export failed", error);
+  }
 }
