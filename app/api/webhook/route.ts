@@ -35,13 +35,13 @@ export async function POST(request: NextRequest) {
     return new Response("Missing signature", { status: 401 });
   }
 
-  const rawBody = await request.text();
-
-  if (!verifyWebhookSignature(signature, rawBody, secret)) {
-    return new Response("Invalid signature", { status: 401 });
-  }
-
   try {
+    const rawBody = await request.text();
+
+    if (!verifyWebhookSignature(signature, rawBody, secret)) {
+      return new Response("Invalid signature", { status: 401 });
+    }
+
     const { addresses, blockNumber, blockTime, label } =
       parseWebhookBody(rawBody);
     const yvusd = (process.env.YVUSD_ADDRESS ?? YVUSD_ADDRESS).toLowerCase();
