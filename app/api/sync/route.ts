@@ -1,3 +1,4 @@
+import { captureError, flushObservability } from "@/lib/observability";
 import { NextRequest, NextResponse } from "next/server";
 import { loadServiceConfig } from "@/lib/config";
 import { initOnchainClients } from "@/lib/onchain";
@@ -67,6 +68,8 @@ export async function GET(request: NextRequest) {
     return NextResponse.json(result);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
+    captureError(error);
+    await flushObservability();
     return NextResponse.json({ ok: false, error: message }, { status: 500 });
   }
 }

@@ -1,3 +1,4 @@
+import { captureError, flushObservability } from "@/lib/observability";
 import { NextRequest, NextResponse } from "next/server";
 import { isAddress } from "viem";
 import { readVaultAprs } from "@/lib/redis";
@@ -30,6 +31,8 @@ export async function GET(
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
+    captureError(error);
+    await flushObservability();
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }

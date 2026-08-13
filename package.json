@@ -9,6 +9,11 @@
   },
   "dependencies": {
     "@envio-dev/hypersync-client": "1.0.0",
+    "@opentelemetry/api-logs": "0.219.0",
+    "@opentelemetry/exporter-logs-otlp-http": "0.219.0",
+    "@opentelemetry/resources": "2.8.0",
+    "@opentelemetry/sdk-logs": "0.219.0",
+    "@opentelemetry/semantic-conventions": "1.41.1",
     "ioredis": "5.9.3",
     "next": "15.5.18",
     "react": "19.2.4",
