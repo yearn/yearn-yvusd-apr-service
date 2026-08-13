@@ -1,6 +1,33 @@
 import type { NextConfig } from "next";
 
+// Runtime config sourced from 1Password via yearn-gha vercel-deploy and
+// injected at `vercel build` time (see .github/workflows/deploy.yml). Listed
+// vars are inlined into the build output so nothing has to live in Vercel's
+// env store. All are referenced server-side only, so they never reach the
+// client bundle.
+// CRON_SECRET is intentionally NOT inlined. Vercel cron signs /api/sync from
+// the project env store, so CRON_SECRET must stay set in the Vercel dashboard
+// (the one exception to "nothing secret in Vercel"). See README.
+const INLINED_ENV = [
+  "ETH_RPC_URL",
+  "ARB_RPC_URL",
+  "BASE_RPC_URL",
+  "KAT_RPC_URL",
+  "REDIS_URL",
+  "HYPERSYNC_API_TOKEN",
+  "KONG_WEBHOOK_SECRET",
+  "YVUSD_ADDRESS",
+  "LOCKED_YVUSD_ADDRESS",
+] as const;
+
+// Only inline vars that are actually set, so code-level `|| default` fallbacks
+// still apply when a var is absent (e.g. local dev).
+const env = Object.fromEntries(
+  INLINED_ENV.flatMap((k) => (process.env[k] ? [[k, process.env[k]!]] : [])),
+);
+
 const nextConfig: NextConfig = {
+  env,
   serverExternalPackages: ["@envio-dev/hypersync-client", "ioredis"],
 };
 

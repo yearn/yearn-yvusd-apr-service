@@ -6,5 +6,8 @@
       "schedule": "12,27,42,57 * * * *"
     }
   ],
-  "installCommand": "bun install --frozen-lockfile"
+  "installCommand": "bun install --frozen-lockfile",
+  "github": {
+    "enabled": false
+  }
 }

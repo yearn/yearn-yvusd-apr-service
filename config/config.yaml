@@ -55,6 +55,9 @@ apr:
         type: historical
       '0xC58D044404d8B14e953C115E67823784dEA53d8F':
         type: historical
+      '0x88887bE419578051FF9F4eb6C858A951921D8888':
+        type: historical
+        window_seconds: 604800
       # syrupUSDC on Arbitrum — collateral for syrupUSDC/USDC morpho looper
       # Uses Morpho oracle price growth to estimate yield (not ERC4626)
       '0x41CA7586cC1311807B4605fBB748a3B8862b42b5':
@@ -64,6 +67,11 @@ apr:
         fallback_apr: 0.04
     strategies:
       # New convertors / compounders that need explicit APR routing.
+      '0x0e297de4005883c757c9f09fdf7cf1363c20e626':
+        apr_source: offchain
+        offchain:
+          type: morpho-api
+          address: '0xF9bdDd4A9b3A45f980e11fDDE96e16364dDBEc49'
       '0xb44ee7869b9d47cd605b05022c8bd8612ebe53ee':
         apr_source: offchain
         offchain:
