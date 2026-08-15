@@ -13,26 +13,11 @@ permissions:
   contents: read
   deployments: write
   pull-requests: write
+  id-token: write
 
 jobs:
   deploy:
-    uses: yearn/yearn-gha/.github/workflows/vercel-deploy.yml@711efc3dc97f65bbf6d6045d593732a935171e32
+    uses: yearn/yearn-gha/.github/workflows/vercel-deploy.yml@9701cd661a98fda358bb7b273b2baab97f12dea2
     with:
-      vault: webops-prod-yvusd-apr-service
-      environment: ${{ github.event_name == 'pull_request' && 'preview' || 'production' }}
-      secrets: |
-        ETH_RPC_URL=yvusd-apr-service/ETH_RPC_URL
-        ARB_RPC_URL=yvusd-apr-service/ARB_RPC_URL
-        BASE_RPC_URL=yvusd-apr-service/BASE_RPC_URL
-        KAT_RPC_URL=yvusd-apr-service/KAT_RPC_URL
-        REDIS_URL=yvusd-apr-service/REDIS_URL
-        HYPERSYNC_API_TOKEN=yvusd-apr-service/HYPERSYNC_API_TOKEN
-        KONG_WEBHOOK_SECRET=yvusd-apr-service/KONG_WEBHOOK_SECRET
-        YVUSD_ADDRESS=yvusd-apr-service/YVUSD_ADDRESS
-        LOCKED_YVUSD_ADDRESS=yvusd-apr-service/LOCKED_YVUSD_ADDRESS
-        OTEL_EXPORTER_OTLP_ENDPOINT=yvusd-apr-service/OTEL_EXPORTER_OTLP_ENDPOINT
-        OTEL_EXPORTER_OTLP_HEADERS=yvusd-apr-service/OTEL_EXPORTER_OTLP_HEADERS
-        OTEL_SERVICE_NAME=yvusd-apr-service/OTEL_SERVICE_NAME
-        OTEL_EXPORTER_OTLP_LOGS_ENDPOINT=yvusd-apr-service/OTEL_EXPORTER_OTLP_LOGS_ENDPOINT
-    secrets:
-      OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
+      project: yvusd-apr-service
+      identity-id: ${{ github.event_name == 'pull_request' && vars.DOPPLER_PREVIEW_IDENTITY_ID || vars.DOPPLER_PRODUCTION_IDENTITY_ID }}
