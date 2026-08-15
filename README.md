@@ -84,7 +84,7 @@ Possible `status` values: `ok`, `degraded` (stale data or empty), `error` (Redis
 
 Triggers a full sync cycle: indexes strategy events from the chain, hydrates onchain metadata, computes APRs for all configured vaults, and writes results to Redis. Called automatically by Vercel cron every 15 minutes.
 
-Requires `Authorization: Bearer <CRON_SECRET>` (Vercel cron sends this automatically). Production fails closed with `500` if `CRON_SECRET` is unset; local dev skips auth when it is absent. See [CRON_SECRET](#cron_secret-vercel-dashboard-only).
+Requires `Authorization: Bearer <CRON_SECRET>` (Vercel cron sends this automatically). Production fails closed with `500` if `CRON_SECRET` is unset; local dev skips auth when it is absent. See [CRON_SECRET](#cron_secret).
 
 **Response**
 
