@@ -2273,14 +2273,7 @@ export async function fetchVaultAprData(
   chainId: number,
 ): Promise<FetchVaultAprDataResult> {
   const client = getViemClient(chainId);
-  const emptyResult: FetchVaultAprDataResult = {
-    totalAssets: 0n,
-    totalSupply: 0n,
-    feeConfig: null,
-    strategyDebts: new Map(),
-    strategyAprs: new Map(),
-  };
-  if (!client) return emptyResult;
+  if (!client) throw new Error(`No RPC client for chain ${chainId}`);
 
   const oracleAddr = getAprOracleAddress(chainId);
   const vaultAddr = getAddress(vault);
@@ -2347,62 +2340,61 @@ export async function fetchVaultAprData(
     });
   }
 
-  try {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const results: { status: "success" | "failure"; result?: any }[] = await (client as any).multicall({
-      contracts,
-      allowFailure: true,
-    });
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const results: { status: "success" | "failure"; result?: any; error?: unknown }[] = await (client as any).multicall({
+    contracts,
+    allowFailure: true,
+  });
 
-    const totalAssets = results[0].status === "success" ? BigInt(results[0].result) : 0n;
-    const totalSupply = results[1].status === "success" ? BigInt(results[1].result) : 0n;
+  if (results[0].status !== "success") {
+    throw new Error(`totalAssets call failed for ${vaultAddr}: ${String(results[0].error)}`);
+  }
+  const totalAssets = BigInt(results[0].result);
+  const totalSupply = results[1].status === "success" ? BigInt(results[1].result) : 0n;
 
-    const strategyDebts = new Map<string, bigint>();
-    const strategyAprs = new Map<string, bigint | null>();
+  const strategyDebts = new Map<string, bigint>();
+  const strategyAprs = new Map<string, bigint | null>();
 
+  for (let i = 0; i < strategies.length; i++) {
+    const idx = 2 + i;
+    const key = strategies[i].toLowerCase();
+    if (results[idx].status === "success") {
+      const r = results[idx].result as readonly [bigint, bigint, bigint, bigint];
+      strategyDebts.set(key, r[2]);
+    } else {
+      strategyDebts.set(key, 0n);
+    }
+  }
+
+  if (hasOracle) {
     for (let i = 0; i < strategies.length; i++) {
-      const idx = 2 + i;
+      const idx = 2 + strategies.length + i;
       const key = strategies[i].toLowerCase();
       if (results[idx].status === "success") {
-        const r = results[idx].result as readonly [bigint, bigint, bigint, bigint];
-        strategyDebts.set(key, r[2]);
+        strategyAprs.set(key, BigInt(results[idx].result));
       } else {
-        strategyDebts.set(key, 0n);
+        strategyAprs.set(key, null);
       }
     }
-
-    if (hasOracle) {
-      for (let i = 0; i < strategies.length; i++) {
-        const idx = 2 + strategies.length + i;
-        const key = strategies[i].toLowerCase();
-        if (results[idx].status === "success") {
-          strategyAprs.set(key, BigInt(results[idx].result));
-        } else {
-          strategyAprs.set(key, null);
-        }
-      }
-    }
-
-    let feeConfig: FetchVaultAprDataResult["feeConfig"] = null;
-    if (hasFeeConfig && feeConfigIdx >= 0) {
-      if (results[feeConfigIdx].status === "success") {
-        const r = results[feeConfigIdx].result as readonly [number, number, number];
-        feeConfig = {
-          managementFee: Number(r[0]),
-          performanceFee: Number(r[1]),
-          lockerBonus: Number(r[2]),
-          cooldownDuration: cooldownIdx >= 0 && results[cooldownIdx].status === "success"
-            ? Number(results[cooldownIdx].result)
-            : 0,
-          withdrawWindow: withdrawWindowIdx >= 0 && results[withdrawWindowIdx].status === "success"
-            ? Number(results[withdrawWindowIdx].result)
-            : 0,
-        };
-      }
-    }
-
-    return { totalAssets, totalSupply, feeConfig, strategyDebts, strategyAprs };
-  } catch {
-    return emptyResult;
   }
+
+  let feeConfig: FetchVaultAprDataResult["feeConfig"] = null;
+  if (hasFeeConfig && feeConfigIdx >= 0) {
+    if (results[feeConfigIdx].status === "success") {
+      const r = results[feeConfigIdx].result as readonly [number, number, number];
+      feeConfig = {
+        managementFee: Number(r[0]),
+        performanceFee: Number(r[1]),
+        lockerBonus: Number(r[2]),
+        cooldownDuration: cooldownIdx >= 0 && results[cooldownIdx].status === "success"
+          ? Number(results[cooldownIdx].result)
+          : 0,
+        withdrawWindow: withdrawWindowIdx >= 0 && results[withdrawWindowIdx].status === "success"
+          ? Number(results[withdrawWindowIdx].result)
+          : 0,
+      };
+    }
+  }
+
+  return { totalAssets, totalSupply, feeConfig, strategyDebts, strategyAprs };
 }

@@ -50,9 +50,11 @@ export function captureError(error: unknown): void {
   // before a route handler (for example in a test or an alternate runtime).
   initObservability();
   const provider = getProvider();
-  if (!provider) return;
 
   const err = error instanceof Error ? error : new Error(String(error));
+  console.error(err);
+  if (!provider) return;
+
   const attributes: Record<string, string> = {
     [ATTR_EXCEPTION_TYPE]: err.name,
     [ATTR_EXCEPTION_MESSAGE]: err.message,
