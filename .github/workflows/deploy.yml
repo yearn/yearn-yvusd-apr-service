@@ -17,7 +17,7 @@ permissions:
 
 jobs:
   deploy:
-    uses: yearn/yearn-gha/.github/workflows/vercel-deploy.yml@9701cd661a98fda358bb7b273b2baab97f12dea2
+    uses: yearn/yearn-gha/.github/workflows/vercel-deploy.yml@e6b4d914d9256b6becdf7c30605238894fa54638
     with:
       project: yvusd-apr-service
       identity-id: ${{ github.event_name == 'pull_request' && vars.DOPPLER_PREVIEW_IDENTITY_ID || vars.DOPPLER_PRODUCTION_IDENTITY_ID }}
