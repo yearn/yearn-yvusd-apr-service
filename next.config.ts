@@ -17,6 +17,7 @@ const INLINED_ENV = [
   "KONG_WEBHOOK_SECRET",
   "YVUSD_ADDRESS",
   "LOCKED_YVUSD_ADDRESS",
+  "SENTRY_DSN",
 ] as const;
 
 // Only inline vars that are actually set, so code-level `|| default` fallbacks
