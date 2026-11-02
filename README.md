@@ -34,7 +34,7 @@ Vercel cron jobs call `GET /api/sync` every 15 minutes. The endpoint requires `C
 
 Store `CRON_SECRET` in both Doppler configs (`prd` and `preview`) so the Vercel integration keeps it in the project env store after a sync. Vercel cron signs requests from that store; do not leave it only as an unmanaged Vercel variable.
 
-All other runtime secrets (RPC URLs, Redis, Hypersync, Kong, OTEL, addresses) also live in Doppler `prd`/`preview`. The deploy workflow no longer inlines them from 1Password.
+All other runtime secrets (RPC URLs, Redis, Hypersync, Kong, Sentry, addresses) also live in Doppler `prd`/`preview`. The deploy workflow no longer inlines them from 1Password.
 
 Generate a secret (at least 16 random characters):
 
