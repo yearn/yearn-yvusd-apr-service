@@ -345,12 +345,12 @@ function isValidNonZeroBytes32(value: string | null): value is `0x${string}` {
   return value !== `0x${"0".repeat(64)}`;
 }
 
-function annualizeGrowthRatio(growthRatio: number, elapsedSeconds: number): bigint | null {
+export function annualizeGrowthRatio(growthRatio: number, elapsedSeconds: number): bigint | null {
   if (!Number.isFinite(growthRatio) || growthRatio <= 0 || elapsedSeconds <= 0) return null;
   try {
-    const apy = Math.pow(growthRatio, SECONDS_PER_YEAR / elapsedSeconds) - 1.0;
-    if (!Number.isFinite(apy)) return null;
-    return BigInt(Math.round(apy * Number(ONE)));
+    const apr = ((growthRatio - 1.0) * SECONDS_PER_YEAR) / elapsedSeconds;
+    if (!Number.isFinite(apr)) return null;
+    return BigInt(Math.round(apr * Number(ONE)));
   } catch {
     return null;
   }
@@ -372,19 +372,9 @@ function annualizeRawGrowth(
   }
 }
 
-function rayAnnualRateToApyRaw(rateRay: bigint): bigint {
+export function rayAnnualRateToApyRaw(rateRay: bigint): bigint {
   if (rateRay <= 0n) return 0n;
-
-  const linearAprRaw = rateRay / (RAY / ONE);
-  try {
-    const apr = Number(rateRay) / Number(RAY);
-    const apy = Math.expm1(Math.log1p(apr / SECONDS_PER_YEAR) * SECONDS_PER_YEAR);
-    if (!Number.isFinite(apy)) return linearAprRaw > 0n ? linearAprRaw : 0n;
-    const result = BigInt(Math.round(apy * Number(ONE)));
-    return result > 0n ? result : 0n;
-  } catch {
-    return linearAprRaw > 0n ? linearAprRaw : 0n;
-  }
+  return rateRay / (RAY / ONE);
 }
 
 async function probePendleMarket(
@@ -1086,7 +1076,7 @@ export async function getPendleMarketApyFromApi(
   let apyRaw: bigint | null = null;
   if (match.apy !== null) {
     try {
-      apyRaw = BigInt(Math.round(match.apy * Number(ONE)));
+      apyRaw = BigInt(Math.round(Math.log1p(match.apy) * Number(ONE)));
     } catch {
       apyRaw = null;
     }
@@ -1095,13 +1085,13 @@ export async function getPendleMarketApyFromApi(
   return { market: match.market, apyRaw };
 }
 
-function morphoVaultItemTotalApr(item: MorphoVaultApiItem | null | undefined): number | null {
+export function morphoVaultItemTotalApr(item: MorphoVaultApiItem | null | undefined): number | null {
   if (!item?.state) return null;
 
   const avgNetApy = parseFiniteNumber(item.state.avgNetApy) ?? 0;
-  if (Number.isFinite(avgNetApy) && avgNetApy !== 0) return avgNetApy;
+  if (Number.isFinite(avgNetApy) && avgNetApy !== 0) return Math.log1p(avgNetApy);
   const netApy = parseFiniteNumber(item.state.netApy) ?? 0;
-  if (Number.isFinite(netApy) && netApy !== 0) return netApy;
+  if (Number.isFinite(netApy) && netApy !== 0) return Math.log1p(netApy);
   const baseApy = parseFiniteNumber(item.state.avgNetApyExcludingRewards) ??
     parseFiniteNumber(item.state.netApyExcludingRewards) ??
     netApy;
@@ -1110,17 +1100,17 @@ function morphoVaultItemTotalApr(item: MorphoVaultApiItem | null | undefined): n
     (sum, reward) => sum + (parseFiniteNumber(reward?.supplyApr) ?? 0),
     0,
   );
-  const total = baseApy + rewardsApr;
+  const total = Math.log1p(baseApy) + rewardsApr;
   return Number.isFinite(total) ? total : null;
 }
 
-function morphoVaultV2ItemTotalApr(item: MorphoVaultV2ApiItem | null | undefined): number | null {
+export function morphoVaultV2ItemTotalApr(item: MorphoVaultV2ApiItem | null | undefined): number | null {
   if (!item) return null;
 
   const avgNetApy = parseFiniteNumber(item.avgNetApy) ?? 0;
-  if (Number.isFinite(avgNetApy) && avgNetApy !== 0) return avgNetApy;
+  if (Number.isFinite(avgNetApy) && avgNetApy !== 0) return Math.log1p(avgNetApy);
   const netApy = parseFiniteNumber(item.netApy) ?? 0;
-  if (Number.isFinite(netApy) && netApy !== 0) return netApy;
+  if (Number.isFinite(netApy) && netApy !== 0) return Math.log1p(netApy);
   const baseApy = parseFiniteNumber(item.avgNetApyExcludingRewards) ??
     parseFiniteNumber(item.netApyExcludingRewards) ??
     netApy;
@@ -1129,7 +1119,7 @@ function morphoVaultV2ItemTotalApr(item: MorphoVaultV2ApiItem | null | undefined
     (sum, reward) => sum + (parseFiniteNumber(reward?.supplyApr) ?? 0),
     0,
   );
-  const total = baseApy + rewardsApr;
+  const total = Math.log1p(baseApy) + rewardsApr;
   return Number.isFinite(total) ? total : null;
 }
 
@@ -1372,18 +1362,7 @@ export async function getKatanaVaultAprFromApi(
 }
 
 export function lnImpliedRateToApyRaw(lnImpliedRate: bigint): bigint {
-  if (lnImpliedRate <= 0n) return 0n;
-  try {
-    const ln = Number(lnImpliedRate) / Number(ONE);
-    const apy = Math.expm1(ln);
-    if (!Number.isFinite(apy)) {
-      return lnImpliedRate > 0n ? lnImpliedRate : 0n;
-    }
-    const result = BigInt(Math.round(apy * Number(ONE)));
-    return result > 0n ? result : 0n;
-  } catch {
-    return lnImpliedRate > 0n ? lnImpliedRate : 0n;
-  }
+  return lnImpliedRate > 0n ? lnImpliedRate : 0n;
 }
 
 export async function getPendleMarketImpliedApy(
@@ -2071,17 +2050,7 @@ export async function getAaveAssetCurrentBorrowApy(
 
 export function ratePerSecondToApyRaw(ratePerSecond: bigint): bigint {
   if (ratePerSecond <= 0n) return 0n;
-
-  const linearAprRaw = ratePerSecond * BigInt(SECONDS_PER_YEAR);
-  try {
-    const rps = Number(ratePerSecond) / Number(ONE);
-    const apy = Math.expm1(Math.log1p(rps) * SECONDS_PER_YEAR);
-    if (!Number.isFinite(apy)) return linearAprRaw > 0n ? linearAprRaw : 0n;
-    const result = BigInt(Math.round(apy * Number(ONE)));
-    return result > 0n ? result : 0n;
-  } catch {
-    return linearAprRaw > 0n ? linearAprRaw : 0n;
-  }
+  return ratePerSecond * BigInt(SECONDS_PER_YEAR);
 }
 
 async function getBlock(
