@@ -1,0 +1,11 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "yvusd-apr-service",
+  "main": "worker.ts",
+  "compatibility_date": "2026-11-10",
+  "compatibility_flags": ["nodejs_compat"],
+  "assets": { "directory": ".open-next/assets", "binding": "ASSETS" },
+  "workers_dev": true,
+  "triggers": { "crons": ["12,27,42,57 * * * *"] },
+  "env": { "preview": { "workers_dev": true, "triggers": { "crons": [] } } }
+}

@@ -1,19 +1,17 @@
 import type { NextConfig } from "next";
 
-// Runtime config sourced from Doppler `prd`/`preview` via the Vercel
-// integration (see .github/workflows/deploy.yml). Listed vars are inlined
-// into the build output so they are present at runtime. All are referenced
+// Runtime config sourced from Doppler `prd`/`preview` at build time (see
+// .github/workflows/cloudflare-deploy.yml). Listed vars are inlined into the
+// build output so they are present at runtime. All are referenced
 // server-side only, so they never reach the client bundle.
-// CRON_SECRET is intentionally NOT inlined. Vercel cron signs /api/sync from
-// the project env store. Keep it in both Doppler configs so the Vercel sync
-// cannot drop it. See README.
+// CRON_SECRET is intentionally NOT inlined. It reaches the worker as a secret
+// synced from Doppler. See README.
 const INLINED_ENV = [
   "ETH_RPC_URL",
   "ARB_RPC_URL",
   "BASE_RPC_URL",
   "KAT_RPC_URL",
   "REDIS_URL",
-  "HYPERSYNC_API_TOKEN",
   "KONG_WEBHOOK_SECRET",
   "YVUSD_ADDRESS",
   "LOCKED_YVUSD_ADDRESS",
@@ -28,7 +26,7 @@ const env = Object.fromEntries(
 
 const nextConfig: NextConfig = {
   env,
-  serverExternalPackages: ["@envio-dev/hypersync-client", "ioredis"],
+  serverExternalPackages: ["ioredis"],
 };
 
 export default nextConfig;
