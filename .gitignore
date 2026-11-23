@@ -31,9 +31,6 @@ yarn-error.log*
 .env.test.local
 .env.production.local
 
-# Vercel
-.vercel
-
 # TypeScript
 *.tsbuildinfo
 
@@ -47,3 +44,7 @@ yarn-error.log*
 
 # Bun
 bun.lockb
+
+# OpenNext
+.open-next/
+.wrangler/

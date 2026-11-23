@@ -19,7 +19,6 @@ ARB_RPC_URL=https://arb1.arbitrum.io/rpc
 BASE_RPC_URL=https://mainnet.base.org
 KAT_RPC_URL=
 REDIS_URL=redis://localhost:6379
-HYPERSYNC_API_TOKEN=
 ```
 
 A running Redis instance is required. To run redis on localhost, try docker like this
@@ -30,11 +29,11 @@ docker run --rm -p 6379:6379 redis:latest
 
 ### `CRON_SECRET`
 
-Vercel cron jobs call `GET /api/sync` every 15 minutes. The endpoint requires `CRON_SECRET` to authenticate these requests. Vercel sends it automatically as an `Authorization: Bearer <secret>` header.
+A Cloudflare cron trigger (`worker.ts`) calls `GET /api/sync` every 15 minutes in production. The endpoint requires `CRON_SECRET` to authenticate these requests; the worker sends it as an `Authorization: Bearer <secret>` header.
 
-Store `CRON_SECRET` in both Doppler configs (`prd` and `preview`) so the Vercel integration keeps it in the project env store after a sync. Vercel cron signs requests from that store; do not leave it only as an unmanaged Vercel variable.
+Store `CRON_SECRET` in Doppler `prd`; the deploy workflow syncs it to the worker as a secret. Preview workers have no cron.
 
-All other runtime secrets (RPC URLs, Redis, Hypersync, Kong, Sentry, addresses) also live in Doppler `prd`/`preview`. The deploy workflow no longer inlines them from 1Password.
+All other runtime secrets (RPC URLs, Redis, Kong, Sentry, addresses) also live in Doppler `prd`/`preview`.
 
 Generate a secret (at least 16 random characters):
 
@@ -42,7 +41,7 @@ Generate a secret (at least 16 random characters):
 openssl rand -base64 32
 ```
 
-Add it in Doppler `prd` and `preview` (the Vercel integration copies it into the project env store):
+Add it in Doppler `prd` and `preview` (the deploy workflow syncs it to the worker):
 
 ```
 doppler secrets set CRON_SECRET --project yvusd-apr-service --config prd
@@ -82,9 +81,9 @@ Possible `status` values: `ok`, `degraded` (stale data or empty), `error` (Redis
 
 ### `GET /api/sync`
 
-Triggers a full sync cycle: indexes strategy events from the chain, hydrates onchain metadata, computes APRs for all configured vaults, and writes results to Redis. Called automatically by Vercel cron every 15 minutes.
+Triggers a full sync cycle: indexes strategy events from the chain, hydrates onchain metadata, computes APRs for all configured vaults, and writes results to Redis. Called automatically by a Cloudflare cron trigger every 15 minutes.
 
-Requires `Authorization: Bearer <CRON_SECRET>` (Vercel cron sends this automatically). Production fails closed with `500` if `CRON_SECRET` is unset; local dev skips auth when it is absent. See [CRON_SECRET](#cron_secret).
+Requires `Authorization: Bearer <CRON_SECRET>` (the cron trigger sends this automatically). Production fails closed with `500` if `CRON_SECRET` is unset; local dev skips auth when it is absent. See [CRON_SECRET](#cron_secret).
 
 **Response**
 
@@ -192,8 +191,8 @@ Returns the raw strategy cache from Redis (indexed strategy metadata, not APRs).
               │  Phase 1: Strategy Sync            │
               │                                    │
               │  For each vault:                   │
-              │    HyperSync ──► StrategyChanged   │
-              │    events (or RPC fallback)         │
+              │    RPC ──► StrategyChanged         │
+              │    events                          │
               │           │                        │
               │    Apply events to cache            │
               │    Hydrate onchain metadata         │
@@ -268,7 +267,7 @@ Returns the raw strategy cache from Redis (indexed strategy metadata, not APRs).
 │       └── snapshot/route.ts      GET  /api/snapshot
 ├── lib/
 │   ├── onchain.ts           viem clients, ABIs, multicall, contract reads
-│   ├── hypersync.ts         HyperSync event fetching (+ RPC fallback)
+│   ├── hypersync.ts         StrategyChanged event fetching (RPC)
 │   ├── strategy-store.ts    strategy indexing, config overrides
 │   ├── apr-engine.ts        YvUsdAprEngine — core APR math (bigint)
 │   ├── calculators.ts       yvusd_base / locked_yvusd calculators

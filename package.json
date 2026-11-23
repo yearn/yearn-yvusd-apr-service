@@ -6,10 +6,10 @@
     "dev": "next dev --turbopack",
     "build": "next build",
     "start": "next start",
+    "build:cloudflare": "opennextjs-cloudflare build",
     "test": "bun test"
   },
   "dependencies": {
-    "@envio-dev/hypersync-client": "1.0.0",
     "@sentry/node": "11.9.0",
     "ioredis": "5.9.3",
     "next": "15.5.29",
@@ -19,12 +19,14 @@
     "yaml": "2.8.2"
   },
   "devDependencies": {
+    "@opennextjs/cloudflare": "1.20.17",
     "@tailwindcss/postcss": "4.1.18",
     "@types/node": "22.19.11",
     "@types/react": "19.2.14",
     "@types/react-dom": "19.2.3",
     "tailwindcss": "4.1.18",
-    "typescript": "5.9.3"
+    "typescript": "5.9.3",
+    "wrangler": "4.163.0"
   },
   "overrides": {
     "sharp": "0.35.5"
