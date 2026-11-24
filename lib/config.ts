@@ -66,8 +66,12 @@ export function loadServiceConfig(
   configPath?: string,
 ): ServiceConfig {
   if (_cached) return _cached;
-  const resolved = configPath ?? path.join(process.cwd(), "config", "config.yaml");
-  const raw = YAML.parse(fs.readFileSync(resolved, "utf-8")) as Record<string, unknown>;
+  // SERVICE_CONFIG_YAML is inlined by next.config.ts; the file read covers tests and scripts.
+  const text = configPath
+    ? fs.readFileSync(configPath, "utf-8")
+    : process.env.SERVICE_CONFIG_YAML ??
+      fs.readFileSync(path.join(process.cwd(), "config", "config.yaml"), "utf-8");
+  const raw = YAML.parse(text) as Record<string, unknown>;
   _cached = raw as unknown as ServiceConfig;
   return _cached;
 }
