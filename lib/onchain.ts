@@ -159,7 +159,7 @@ const PENDLE_API_BASE_URL = "https://api-v2.pendle.finance/core/v1";
 const PENDLE_API_CACHE_TTL_MS = 60_000;
 const MORPHO_API_URL = "https://blue-api.morpho.org/graphql";
 const MORPHO_API_CACHE_TTL_MS = 60_000;
-const KATANA_SNAPSHOT_API_BASE_URL = "https://kong.yearn.fi/api/rest/snapshot";
+const KATANA_SNAPSHOT_API_BASE_URL = "https://kong.yearn.farm/api/rest/snapshot";
 const KATANA_APR_CACHE_TTL_MS = 60_000;
 const CHAIN_PENDLE_ROUTER_STATIC_ADDRESSES: Record<number, string> = {
   1: "0x263833d47eA3fA4a30f269323aba6a107f9eB14C",

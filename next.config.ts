@@ -1,3 +1,5 @@
+import fs from "fs";
+import path from "path";
 import type { NextConfig } from "next";
 
 // Runtime config sourced from Doppler `prd`/`preview` at build time (see
@@ -22,6 +24,13 @@ const INLINED_ENV = [
 // still apply when a var is absent (e.g. local dev).
 const env = Object.fromEntries(
   INLINED_ENV.flatMap((k) => (process.env[k] ? [[k, process.env[k]!]] : [])),
+);
+
+// The Worker bundle has no filesystem access to config/config.yaml, so its
+// contents are inlined at build time and read by lib/config.ts.
+env.SERVICE_CONFIG_YAML = fs.readFileSync(
+  path.join(process.cwd(), "config", "config.yaml"),
+  "utf-8",
 );
 
 const nextConfig: NextConfig = {
